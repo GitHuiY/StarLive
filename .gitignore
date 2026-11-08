@@ -1,0 +1,13 @@
+# Local files and credentials
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+node_modules/
+
+# Private hosting metadata
+.openai/
