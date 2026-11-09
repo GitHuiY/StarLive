@@ -8,6 +8,20 @@ Thumbs.db
 *.key
 *.log
 node_modules/
+__pycache__/
+*.py[cod]
 
 # Private hosting metadata
 .openai/
+
+# Android build output and local configuration
+**/.gradle/
+**/.kotlin/
+**/build/
+**/local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+/artifacts/
+captures/
