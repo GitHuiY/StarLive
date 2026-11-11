@@ -3,24 +3,28 @@ package io.github.githuiy.starlive
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.view.MotionEvent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertValueEquals
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.ViewModelProvider
@@ -160,14 +164,74 @@ class StarLiveUiTest {
     private fun goOverview() {
         compose.onNodeWithTag("nav_stars").performClick()
         compose.waitForIdle()
-        if (exists("mini_map")) contentClick("mini_map")
+        if (exists("focused_sky")) tapBlankSky()
         compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    private fun tapBlankSky() {
+        compose.onNodeWithTag("sky_background", useUnmergedTree = true).performScrollTo()
+            .performTouchInput { click(Offset(width * 0.08f, height * 0.1f)) }
+    }
+
+    private fun tapOutsideDetail() {
+        scenario.onActivity {
+            val dialog = checkNotNull(ShadowDialog.getLatestDialog())
+            check(dialog.isShowing)
+            val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_OUTSIDE, -1f, -1f, 0)
+            try {
+                dialog.onTouchEvent(event)
+            } finally {
+                event.recycle()
+            }
+        }
     }
 
     private fun selectMonday() {
         goOverview()
         contentClick("star_0")
         compose.waitUntil(5_000) { exists("day_panel") }
+    }
+
+    private fun mondayItemId(week: String, title: String): String {
+        var id: String? = null
+        scenario.onActivity { activity ->
+            val data = checkNotNull(ViewModelProvider(activity)[PlanViewModel::class.java].data)
+            id = PlanEngine.confirmed(data, week).days[0].single { it.title == title }.id
+        }
+        return checkNotNull(id)
+    }
+
+    private fun planCard(id: String): SemanticsNodeInteraction {
+        return compose.onNodeWithTag("plan_$id", useUnmergedTree = true)
+    }
+
+    private fun companion(id: String): SemanticsNodeInteraction {
+        return compose.onNodeWithTag("companion_$id", useUnmergedTree = true)
+    }
+
+    private fun holdAndDrag(card: SemanticsNodeInteraction, destinationInRoot: Offset) {
+        val destination = destinationInRoot - card.fetchSemanticsNode().boundsInRoot.topLeft
+        card.performTouchInput {
+            down(center)
+            advanceEventTime(1_600)
+            for (step in 0..8) {
+                moveTo(center + (destination - center) * (step / 8f), delayMillis = 32)
+            }
+            up()
+        }
+    }
+
+    private fun assertCardAnimationPrecedesDetail(card: SemanticsNodeInteraction,
+        detail: SemanticsNodeInteraction) {
+        compose.mainClock.autoAdvance = false
+        try {
+            card.performTouchInput { click() }
+            compose.mainClock.advanceTimeBy(80)
+            detail.assertDoesNotExist()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        detail.assertIsDisplayed()
     }
 
     private fun screenshot(name: String, dialog: Boolean = false) {
@@ -190,47 +254,156 @@ class StarLiveUiTest {
         File(folder, name).outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
 
-    @Test fun overviewCanStayAndDemoNeverWritesPersonalPlans() {
-        goOverview()
+    @Test fun startupFocusesAndBlankSkyReturnsToAStableOverview() {
+        compose.mainClock.advanceTimeBy(3_000)
+        compose.waitUntil(5_000) { exists("focused_sky") && exists("day_panel") }
+        tapBlankSky()
+        compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
         screenshot("01-overview.png")
-        selectMonday()
-        contentClick("mode_toggle")
-        compose.waitUntil(5_000) { textExists("给房间一个小小整理") }
-        compose.onNodeWithContentDescription("完成：给房间一个小小整理").performScrollTo().performClick()
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithContentDescription("取消完成：给房间一个小小整理").assertIsOn(); true }
-                .getOrDefault(false)
-        }
-        scenario.onActivity {
-            val data = ViewModelProvider(it)[PlanViewModel::class.java].data!!
-            assertTrue("Demo changed personal weeks: ${data.weeks.keys}", data.weeks.isEmpty())
-            assertTrue("Demo changed personal drafts: ${data.drafts.keys}", data.drafts.isEmpty())
-        }
-        contentClick("mode_toggle")
-        compose.onAllNodesWithText("给房间一个小小整理").assertCountEquals(0)
-        contentClick("mini_map")
         compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
         compose.onAllNodesWithTag("day_panel", useUnmergedTree = true).assertCountEquals(0)
         compose.onNodeWithTag("nav_ideas").performClick()
-        screenshot("08-ideas.png")
         compose.onNodeWithTag("nav_stars").performClick()
         compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun focusedSkyUsesTwoColumnsAndOnlyCompletesWhenDraggedToItsStar() {
+        val monday = LocalDate.parse(PlanEngine.weekKey(LocalDate.now()))
+        val completed = "读十页书"
+        val unfinished = "散步十五分钟"
+        val body = "读完一章，记下喜欢的一句话。"
+        scenario.onActivity { activity ->
+            val repository = ViewModelProvider(activity)[PlanViewModel::class.java].repository
+            repository.addDraftItem(monday.toString(), 0, completed, "阅读", body)
+            repository.addDraftItem(monday.toString(), 0, unfinished, "运动")
+            repository.confirmDraft(monday.toString())
+        }
+        selectMonday()
+        compose.waitUntil(10_000) { textExists(completed) && textExists(unfinished) }
+        val completedId = mondayItemId(monday.toString(), completed)
+        val first = planCard(completedId).performScrollTo().assertValueEquals("未完成")
+        val second = planCard(mondayItemId(monday.toString(), unfinished)).assertValueEquals("未完成")
+        val firstBounds = first.fetchSemanticsNode().boundsInRoot
+        val secondBounds = second.fetchSemanticsNode().boundsInRoot
+        assertEquals(firstBounds.top, secondBounds.top, 1f)
+        assertEquals(firstBounds.bottom, secondBounds.bottom, 1f)
+        assertTrue(firstBounds.right <= secondBounds.left)
+        screenshot("02-personal-day.png")
+
+        val detail = compose.onNodeWithTag("plan_detail", useUnmergedTree = true)
+        assertCardAnimationPrecedesDetail(first, detail)
+        compose.onNodeWithText(body).assertIsDisplayed()
+        screenshot("10-plan-detail.png", dialog = true)
+        compose.onNodeWithText("关闭").performClick()
+        first.assertValueEquals("未完成")
+
+        first.performTouchInput {
+            down(center)
+            advanceEventTime(1_600)
+            up()
+        }
+        detail.assertDoesNotExist()
+        first.assertValueEquals("未完成")
+        companion(completedId).assertDoesNotExist()
+
+        val completedCompanion = companion(completedId)
+        val sky = compose.onNodeWithTag("sky_background", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        holdAndDrag(first, sky.topLeft + Offset(sky.width * .08f, sky.height * .1f))
+        first.assertValueEquals("未完成")
+        completedCompanion.assertDoesNotExist()
+
+        val primary = compose.onNodeWithTag("primary_star", useUnmergedTree = true).assertIsDisplayed()
+        val primaryBounds = primary.fetchSemanticsNode().boundsInRoot
+        holdAndDrag(first, primaryBounds.center)
+        awaitRepository("Dragging the plan onto the primary star did not create a completed companion") {
+            runCatching { completedCompanion.assertValueEquals("已完成"); true }.getOrDefault(false)
+        }
+        first.assertDoesNotExist()
+        detail.assertDoesNotExist()
+        second.assertValueEquals("未完成")
+        val date = hasText("${monday.monthValue} 月 ${monday.dayOfMonth} 日", substring = true)
+        val dayPanel = hasAnyAncestor(hasTestTag("day_panel"))
+        val focusedSky = hasAnyAncestor(hasTestTag("focused_sky"))
+        compose.onNode(date and dayPanel, useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasText(completed) and dayPanel, useUnmergedTree = true).assertDoesNotExist()
+        compose.onNode(hasText(unfinished) and dayPanel, useUnmergedTree = true).assertExists()
+        compose.onAllNodes((date or hasText(completed) or hasText(unfinished)) and focusedSky,
+            useUnmergedTree = true).assertCountEquals(0)
+        screenshot("11-companion-star.png")
+
+        val companionAtRest = completedCompanion.fetchSemanticsNode().boundsInRoot.center
+        completedCompanion.performClick()
+        compose.waitUntil(5_000) { exists("plan_detail") }
+        detail.assertIsDisplayed()
+        compose.onNodeWithText(body).assertIsDisplayed()
+        val companionFocused = completedCompanion.fetchSemanticsNode().boundsInRoot.center
+        assertTrue((companionFocused - primaryBounds.center).getDistance()
+            < (companionAtRest - primaryBounds.center).getDistance())
+        tapOutsideDetail()
+        detail.assertDoesNotExist()
+        completedCompanion.assertIsDisplayed()
+        val primaryAtRest = primary.fetchSemanticsNode().boundsInRoot.center
+        assertEquals(primaryBounds.center.x, primaryAtRest.x, 1f)
+        assertEquals(primaryBounds.center.y, primaryAtRest.y, 1f)
+        tapBlankSky()
+        compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+        completedCompanion.assertDoesNotExist()
+    }
+
+    // Robolectric #8460 affects both dialogs that contain a text field.
+    @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
+    @Test fun ideasOpenInDetailAndAddTheirBodyOnlyToDraft() {
+        val title = "给房间一个小小整理"
+        val body = "从桌面开始。\n把不用的东西放回原处。"
+        compose.onNodeWithTag("nav_ideas").performClick()
+        val first = compose.onNodeWithTag("idea_card_0", useUnmergedTree = true)
+        val second = compose.onNodeWithTag("idea_card_1", useUnmergedTree = true)
+        val firstBounds = first.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val secondBounds = second.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(firstBounds.top, secondBounds.top, 1f)
+        assertTrue(firstBounds.right <= secondBounds.left)
+        screenshot("08-ideas.png")
+
+        val detail = compose.onNodeWithTag("idea_detail", useUnmergedTree = true)
+        assertCardAnimationPrecedesDetail(first, detail)
+        compose.onNodeWithTag("idea_body", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(body)) }
+        val add = compose.onNodeWithTag("idea_add_0", useUnmergedTree = true)
+        add.assertIsDisplayed()
+        screenshot("09-idea-detail.png", dialog = true)
+        add.performClick()
+        compose.waitUntil(5_000) { !exists("idea_detail") }
+        awaitRepository("The selected idea and its body did not persist as a draft") {
+            var added = false
+            scenario.onActivity { activity ->
+                val data = ViewModelProvider(activity)[PlanViewModel::class.java].data!!
+                assertTrue("Adding an idea confirmed the plan", data.weeks.isEmpty())
+                added = data.drafts.values.any { week -> week.days.flatten().any {
+                    it.title == title && it.body == body
+                } }
+            }
+            added
+        }
     }
 
     // Robolectric #8460: >320dp Dialog + TextField can loop in layout. Keep the
     // product untouched; this editor flow uses 320dp, other visual cases use 360dp.
     @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
     @Test fun draftConfirmationAndCompletionSurviveActivityRecreationAndReload() {
+        val week = PlanEngine.weekKey(LocalDate.now())
         val title = "读十页书，让今天慢一点"
+        val body = "把手机放在旁边，翻开书。"
         selectMonday()
         compose.onNodeWithTag("open_planner").performClick()
         contentClick("planner_add")
         // Exercise the real TextField onValueChange without Robolectric's virtual
         // IME/focus loop. Physical keyboard behavior remains a device-test item.
-        compose.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.SetText) {
-            it(AnnotatedString(title))
-        }
+        compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(title)) }
+        compose.onNodeWithTag("plan_body", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(body)) }
         compose.onNodeWithText("阅读").performScrollTo().performClick()
         compose.onNodeWithText("保存到草稿").performClick()
         compose.waitUntil(10_000) { textExists(title) }
@@ -246,18 +419,22 @@ class StarLiveUiTest {
         contentClick("planner_confirm")
         compose.onNodeWithTag("planner_confirm_dialog", useUnmergedTree = true).performClick()
         compose.waitUntil(10_000) { textExists(title) && exists("day_panel") }
-        compose.onNodeWithContentDescription("完成：$title").performScrollTo().performClick()
-        compose.waitUntil(10_000) {
-            runCatching { compose.onNodeWithContentDescription("取消完成：$title").assertIsOn(); true }
-                .getOrDefault(false)
+        val id = mondayItemId(week, title)
+        val card = planCard(id).performScrollTo()
+        card.performSemanticsAction(SemanticsActions.OnLongClick)
+        awaitRepository("Accessible completion action did not persist") {
+            runCatching { companion(id).assertValueEquals("已完成"); true }.getOrDefault(false)
         }
-        screenshot("02-personal-day.png")
+        card.assertDoesNotExist()
         scenario.recreate()
         compose.waitUntil(10_000) { exists("day_panel") }
         closeScenario()
         launch()
         selectMonday()
-        compose.onNodeWithContentDescription("取消完成：$title").performScrollTo().assertIsOn()
+        planCard(id).assertDoesNotExist()
+        companion(id).performScrollTo().assertValueEquals("已完成").performClick()
+        compose.waitUntil(5_000) { exists("plan_detail") }
+        compose.onNodeWithText(body).assertIsDisplayed()
     }
 
     @Test fun importedBackupShowsPreviewAndDoesNotReplaceUntilConfirmed() {
@@ -287,7 +464,9 @@ class StarLiveUiTest {
 
     @Test fun screenTimeHasNoFakeUsageAndSettingsPersist() {
         compose.onNodeWithTag("nav_space").performClick()
+        compose.onNodeWithText("屏幕留白").assertDoesNotExist()
         compose.onNodeWithText("当前没有可用的使用记录").assertIsDisplayed()
+        screenshot("04-screen-space.png")
         val field = compose.onNodeWithTag("setting_continuous_minutes", useUnmergedTree = true)
         field.performScrollTo().performTextClearance()
         field.performTextInput("75")
@@ -299,8 +478,6 @@ class StarLiveUiTest {
             scenario.onActivity { disabled = !ViewModelProvider(it)[PlanViewModel::class.java].data!!.settings.perAppDailyEnabled }
             disabled
         }
-        compose.onNodeWithText("抬起头，\n生活在这里。").performScrollTo()
-        screenshot("04-screen-space.png")
         closeScenario()
         launch()
         compose.onNodeWithTag("nav_space").performClick()

@@ -31,6 +31,7 @@ public final class BackupCodec {
     public static final int MAX_BYTES = 2 * 1024 * 1024;
     public static final int MAX_TITLE_LENGTH = 200;
     public static final int MAX_CATEGORY_LENGTH = 40;
+    public static final int MAX_BODY_LENGTH = 2_000;
     private static final int MAX_WEEKS = 5200;
     private static final int MAX_ITEMS = 20_000;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -124,6 +125,7 @@ public final class BackupCodec {
                     value.addProperty("title", item.title);
                     value.addProperty("category", item.category);
                     value.addProperty("done", item.done);
+                    if (!item.body.isEmpty()) value.addProperty("body", item.body);
                     items.add(value);
                 }
                 days.add(items);
@@ -157,7 +159,9 @@ public final class BackupCodec {
                 for (JsonElement value : array(day)) {
                     if (counts[0] + counts[1] >= MAX_ITEMS) throw invalid("事项数量超过 20000 上限");
                     JsonObject item = object(value, "item");
-                    keys(item, "id", "title", "category", "done");
+                    boolean hasBody = item.has("body");
+                    if (hasBody) keys(item, "id", "title", "category", "done", "body");
+                    else keys(item, "id", "title", "category", "done");
                     String id = string(item.get("id"));
                     try {
                         if (!UUID.fromString(id).toString().equalsIgnoreCase(id)) throw invalid("事项 ID 无效");
@@ -167,12 +171,14 @@ public final class BackupCodec {
                     String title = string(item.get("title"));
                     String category = string(item.get("category"));
                     boolean done = bool(item.get("done"));
+                    String body = hasBody ? string(item.get("body")) : "";
                     if (title.length() > MAX_TITLE_LENGTH || (!drafts && title.trim().isEmpty())
                             || category.trim().isEmpty() || category.length() > MAX_CATEGORY_LENGTH
                             || (title.trim().isEmpty() && done)) {
                         throw invalid("事项标题、分类或完成状态无效");
                     }
-                    parsed.add(new PlanItem(id, title, category, done));
+                    if (body.length() > MAX_BODY_LENGTH) throw invalid("事项正文超过长度上限");
+                    parsed.add(new PlanItem(id, title, category, done, body));
                     counts[drafts ? 1 : 0]++;
                     if (!drafts && done) counts[2]++;
                 }

@@ -83,12 +83,25 @@ class PlanRepository internal constructor(context: Context, private val storage:
         engine().toggleCompletion(it, week, day, id)
     }
 
-    fun addDraftItem(week: String, day: Int, title: String, category: String) = mutate {
-        engine().addDraftItem(it, week, day, title, category)
+    fun setCompletion(week: String, day: Int, id: String, completed: Boolean) = mutate { state ->
+        val item = PlanEngine.confirmed(state, week).days[day].firstOrNull { it.id == id }
+        if (item == null || item.done == completed) state
+        else engine().toggleCompletion(state, week, day, id)
+    }
+
+    fun addDraftItem(week: String, day: Int, title: String, category: String) =
+        addDraftItem(week, day, title, category, "")
+
+    fun addDraftItem(week: String, day: Int, title: String, category: String, body: String) = mutate {
+        engine().addDraftItem(it, week, day, title, category, body)
     }
 
     fun updateDraftItem(week: String, day: Int, id: String, title: String, category: String) = mutate {
         engine().updateDraftItem(it, week, day, id, title, category)
+    }
+
+    fun updateDraftItem(week: String, day: Int, id: String, title: String, category: String, body: String) = mutate {
+        engine().updateDraftItem(it, week, day, id, title, category, body)
     }
 
     fun deleteDraftItem(week: String, day: Int, id: String) = mutate {

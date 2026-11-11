@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -51,8 +50,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import io.github.githuiy.starlive.core.AppState
 import io.github.githuiy.starlive.core.PlanEngine
-import io.github.githuiy.starlive.core.PlanItem
-import io.github.githuiy.starlive.core.WeekPlan
 import io.github.githuiy.starlive.data.BackupPreview
 import io.github.githuiy.starlive.data.PlanRepository
 import java.time.LocalDate
@@ -73,8 +70,6 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     var overview by rememberSaveable { mutableStateOf(true) }
     var introConsumed by rememberSaveable { mutableStateOf(false) }
     var followToday by rememberSaveable { mutableStateOf(true) }
-    var demoMode by rememberSaveable { mutableStateOf(false) }
-    var demoDone by rememberSaveable { mutableStateOf(listOf<String>()) }
     val snackbar = remember { SnackbarHostState() }
     val scroll = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -123,14 +118,6 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         if (page != "stars") page = "stars"
         overview = true
     }
-    val demoWeek = remember(demoDone) {
-        val seed = listOf(listOf(0, 3, 4), listOf(2, 3), listOf(6, 4, 12),
-            listOf(8, 9, 2), listOf(1, 12), listOf(10, 11, 7), listOf(6, 2, 13))
-        WeekPlan(seed.mapIndexed { day, ideas -> ideas.mapIndexed { index, idea ->
-            val id = "demo-$day-$index"
-            PlanItem(id, LifeIdeas[idea].title, LifeIdeas[idea].category, id in demoDone)
-        } })
-    }
     StarBackdrop(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         Scaffold(containerColor = androidx.compose.ui.graphics.Color.Transparent, contentColor = Ink,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -151,8 +138,8 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
             },
             bottomBar = {
                 NavigationBar(containerColor = Night.copy(alpha = .96f), windowInsets = WindowInsets.navigationBars) {
-                    listOf(Triple("stars", "✦", "一周星图"), Triple("ideas", "✧", "生活灵感"),
-                        Triple("space", "☾", "屏幕留白")).forEach { (route, icon, label) ->
+                    listOf(Triple("stars", "✦", "Starmap"), Triple("ideas", "✧", "Sparks"),
+                        Triple("space", "☾", "Daylight")).forEach { (route, icon, label) ->
                         NavigationBarItem(selected = page == route, onClick = { navigate(route) },
                             icon = { Text(icon, fontSize = 23.sp, fontFamily = FontFamily.Serif) },
                             label = { Text(label, style = MaterialTheme.typography.labelSmall) },
@@ -174,18 +161,14 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         Button(onClick = onImport, enabled = !backupBusy) { Text("选择备份并预览") }
                         TextButton(onClick = onRestore, enabled = !backupBusy) { Text("预览上次覆盖前的备份") }
                     }
-                    page == "stars" -> HomeScreen(today, monday,
-                        if (demoMode) demoWeek else PlanEngine.confirmed(data, weekKey),
-                        demoMode || data.weeks.containsKey(weekKey), offset, ::chooseWeek,
+                    page == "stars" -> HomeScreen(today, monday, PlanEngine.confirmed(data, weekKey),
                         selectedDay, ::chooseDay, overview, { introConsumed = true; overview = true },
-                        !introConsumed, demoMode, { demoMode = !demoMode }, reduceMotion,
-                        onToggle = { item ->
-                            if (demoMode) demoDone = if (item.id in demoDone) demoDone - item.id else demoDone + item.id
-                            else repository.toggleCompletion(weekKey, selectedDay, item.id)
-                        }, onPlanner = { demoMode = false; navigate("planner") })
+                        reduceMotion, onToggle = { item ->
+                            repository.setCompletion(weekKey, selectedDay, item.id, !item.done)
+                        }, pageScroll = scroll)
                     page == "ideas" -> IdeasScreen(today, monday, offset, ::chooseWeek,
                         selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), repository::addDraftItem,
-                        onPlanner = { navigate("planner") })
+                        onPlanner = { navigate("planner") }, reduceMotion = reduceMotion)
                     page == "planner" -> PlannerScreen(today, monday, offset, ::chooseWeek,
                         selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), data.weeks.containsKey(weekKey),
                         onIdeas = { navigate("ideas") }, onAdd = repository::addDraftItem,
@@ -193,7 +176,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         onMoveBy = repository::moveDraftItemBy,
                         onMoveToDay = repository::moveDraftItemToDay, onConfirm = { confirmedWeek ->
                             repository.confirmDraft(confirmedWeek)
-                            demoMode = false; page = "stars"; overview = false
+                            page = "stars"; overview = false
                             offset = if (confirmedWeek == mondayOf(today).toString()) 0 else 1
                         })
                     page == "space" -> SpaceScreen(data.settings, timezone, { transform -> repository.updateSettings(transform) },
@@ -215,7 +198,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         style = MaterialTheme.typography.bodySmall, color = Muted)
                     Text("确认后将覆盖本机计划、草稿和提醒设置。覆盖前会保留一份本机备份，可手动恢复。",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
-                } }, confirmButton = { Button(onClick = { demoMode = false; onConfirmPreview() }, enabled = !backupBusy,
+                } }, confirmButton = { Button(onClick = onConfirmPreview, enabled = !backupBusy,
                     modifier = Modifier.testTag("backup_confirm")) { Text(if (backupBusy) "正在恢复…" else "确认覆盖并恢复") } },
                 dismissButton = { TextButton(onClick = onCancelPreview, enabled = !backupBusy) { Text("取消，保留现有数据") } })
         }

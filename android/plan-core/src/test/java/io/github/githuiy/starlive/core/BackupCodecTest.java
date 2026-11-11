@@ -50,6 +50,43 @@ public final class BackupCodecTest {
         assertFalse(encoded.contains("usage"));
     }
 
+    @Test public void versionOneBackupsAcceptBothMultilineBodiesAndLegacyItems() {
+        String body = "读完第一章\n 写下想记的一句 \uD83C\uDF1F";
+        AppState state = sample();
+        String id = state.weeks.get(WEEK).days.get(0).get(0).id;
+        state = engine.updateDraftItem(state, WEEK, 0, id, "和 AI 交流思考", "交流思考", body);
+        state = engine.confirmDraft(state, WEEK);
+        String draftBody = body + "\n下次继续";
+        state = engine.updateDraftItem(state, WEEK, 0, id, "和 AI 交流思考", "交流思考", draftBody);
+
+        String encoded = BackupCodec.encode(state);
+        AppState restored = BackupCodec.decode(encoded).data;
+        assertEquals(body, restored.weeks.get(WEEK).days.get(0).get(0).body);
+        assertEquals(draftBody, restored.drafts.get(WEEK).days.get(0).get(0).body);
+        assertEquals("", restored.drafts.get("2026-11-09").days.get(4).get(0).body);
+        assertEquals(encoded, BackupCodec.encode(restored));
+
+        JsonObject legacy = json(state);
+        firstDay(legacy, "weeks").get(0).getAsJsonObject().remove("body");
+        firstDay(legacy, "drafts").get(0).getAsJsonObject().remove("body");
+        AppState imported = BackupCodec.decode(legacy.toString()).data;
+        assertEquals("", imported.weeks.get(WEEK).days.get(0).get(0).body);
+        assertEquals("", imported.drafts.get(WEEK).days.get(0).get(0).body);
+        assertTrue(imported.weeks.get(WEEK).days.get(0).get(0).done);
+    }
+
+    @Test public void bodyAcceptsOnlyStringsWithinTheLengthLimit() {
+        JsonObject root = json(sample());
+        JsonObject item = firstDay(root, "weeks").get(0).getAsJsonObject();
+        item.addProperty("body", 30);
+        assertThrows(IllegalArgumentException.class, () -> BackupCodec.decode(root.toString()));
+        String maximum = "字".repeat(BackupCodec.MAX_BODY_LENGTH);
+        item.addProperty("body", maximum);
+        assertEquals(maximum, BackupCodec.decode(root.toString()).data.weeks.get(WEEK).days.get(0).get(0).body);
+        item.addProperty("body", maximum + "字");
+        assertThrows(IllegalArgumentException.class, () -> BackupCodec.decode(root.toString()));
+    }
+
     @Test public void previewNeverMutatesTheCurrentStateOrAdoptsImport() {
         AppState current = sample();
         String original = BackupCodec.encode(current);

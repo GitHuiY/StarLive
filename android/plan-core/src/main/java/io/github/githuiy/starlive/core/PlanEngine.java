@@ -35,8 +35,13 @@ public final class PlanEngine {
 
     public AppState addDraftItem(AppState state, String week, int day,
             String title, String category) {
+        return addDraftItem(state, week, day, title, category, "");
+    }
+
+    public AppState addDraftItem(AppState state, String week, int day,
+            String title, String category, String body) {
         editable(week, day);
-        checkText(title, category);
+        checkText(title, category, body);
         List<List<PlanItem>> days = draft(state, week).mutableDays();
         String trimmed = title.trim();
         if (!trimmed.isEmpty()) {
@@ -44,19 +49,26 @@ public final class PlanEngine {
                 if (item.title.trim().equals(trimmed)) return state;
             }
         }
-        days.get(day).add(new PlanItem(UUID.randomUUID().toString(), title, category, false));
+        days.get(day).add(new PlanItem(UUID.randomUUID().toString(), title, category, false, body));
         return withDraft(state, week, new WeekPlan(days));
     }
 
     public AppState updateDraftItem(AppState state, String week, int day, String id,
             String title, String category) {
+        return updateDraftItem(state, week, day, id, title, category, null);
+    }
+
+    /** A null body preserves the saved text for callers that only edit the title and category. */
+    public AppState updateDraftItem(AppState state, String week, int day, String id,
+            String title, String category, String body) {
         editable(week, day);
-        checkText(title, category);
         List<List<PlanItem>> days = draft(state, week).mutableDays();
         int index = indexOf(days.get(day), id);
         PlanItem old = days.get(day).get(index);
+        String updatedBody = body == null ? old.body : body;
+        checkText(title, category, updatedBody);
         days.get(day).set(index, new PlanItem(id, title, category,
-                old.title.trim().equals(title.trim()) && old.done));
+                old.title.trim().equals(title.trim()) && old.done, updatedBody));
         return withDraft(state, week, new WeekPlan(days));
     }
 
@@ -77,7 +89,7 @@ public final class PlanEngine {
         List<PlanItem> target = days.get(toDay);
         if (toIndex < 0 || toIndex > target.size()) throw new IllegalArgumentException("排序位置无效");
         target.add(toIndex, new PlanItem(old.id, old.title, old.category,
-                fromDay == toDay && old.done));
+                fromDay == toDay && old.done, old.body));
         return withDraft(state, week, new WeekPlan(days));
     }
 
@@ -86,7 +98,7 @@ public final class PlanEngine {
         List<List<PlanItem>> days = confirmed(state, week).mutableDays();
         int index = indexOf(days.get(day), id);
         PlanItem item = days.get(day).get(index);
-        days.get(day).set(index, new PlanItem(item.id, item.title, item.category, !item.done));
+        days.get(day).set(index, new PlanItem(item.id, item.title, item.category, !item.done, item.body));
         Map<String, WeekPlan> weeks = new LinkedHashMap<>(state.weeks);
         weeks.put(week, new WeekPlan(days));
         // An open draft intentionally stays untouched; confirmation merges latest done.
@@ -109,7 +121,7 @@ public final class PlanEngine {
                         break;
                     }
                 }
-                items.add(new PlanItem(item.id, title, item.category, done));
+                items.add(new PlanItem(item.id, title, item.category, done, item.body));
             }
             confirmed.add(items);
         }
@@ -147,11 +159,14 @@ public final class PlanEngine {
         if (day < 0 || day > 6) throw new IllegalArgumentException("星期索引必须为 0 至 6");
     }
 
-    private static void checkText(String title, String category) {
+    private static void checkText(String title, String category, String body) {
         if (title == null || title.length() > BackupCodec.MAX_TITLE_LENGTH
                 || category == null || category.trim().isEmpty()
                 || category.length() > BackupCodec.MAX_CATEGORY_LENGTH) {
             throw new IllegalArgumentException("事项标题或分类无效");
+        }
+        if (body == null || body.length() > BackupCodec.MAX_BODY_LENGTH) {
+            throw new IllegalArgumentException("事项正文无效或过长");
         }
     }
 }

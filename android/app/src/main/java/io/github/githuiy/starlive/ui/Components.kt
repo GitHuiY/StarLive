@@ -147,9 +147,10 @@ fun CategoryMark(category: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun TaskEditorDialog(initialTitle: String, initialCategory: String, editing: Boolean,
-    onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+    onDismiss: () -> Unit, initialBody: String = "", onSave: (String, String, String) -> Unit) {
     var title by remember { mutableStateOf(initialTitle) }
     var category by remember { mutableStateOf(initialCategory) }
+    var body by remember { mutableStateOf(initialBody) }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(if (editing) "调整这份期待" else "留一件想做的小事") },
         text = {
@@ -157,13 +158,16 @@ fun TaskEditorDialog(initialTitle: String, initialCategory: String, editing: Boo
                 OutlinedTextField(value = title, onValueChange = { if (it.length <= BackupCodec.MAX_TITLE_LENGTH) title = it },
                     label = { Text("想做什么") }, minLines = 2,
                     supportingText = { Text("${title.length}/${BackupCodec.MAX_TITLE_LENGTH} · 保存在草稿中") })
+                OutlinedTextField(value = body, onValueChange = { if (it.length <= BackupCodec.MAX_BODY_LENGTH) body = it },
+                    label = { Text("正文（可选）") }, minLines = 3, maxLines = 6,
+                    modifier = Modifier.fillMaxWidth().testTag("plan_body"))
                 Text("选择类别", color = Muted)
                 CategoryPicker(category, { category = it })
-                if (editing) Text("改名会重置该事项的完成状态；调整类别和排序会保留完成状态。",
+                if (editing) Text("改名会重置该事项的完成状态。编辑正文、调整类别和排序会保留完成状态。",
                     style = MaterialTheme.typography.bodySmall, color = Muted)
             }
         },
-        confirmButton = { Button(onClick = { onSave(title.trim(), category) }, enabled = title.isNotBlank()) {
+        confirmButton = { Button(onClick = { onSave(title.trim(), category, body) }, enabled = title.isNotBlank()) {
             Text("保存到草稿")
         } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })

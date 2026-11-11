@@ -17,16 +17,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertValueEquals
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.Density
@@ -90,17 +89,26 @@ class LargeTextUiTest {
                             verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             HomeScreen(LocalDate.of(2026, 11, 9), LocalDate.of(2026, 11, 9),
                                 WeekPlan((0..6).map { day -> if (day == 0) listOf(PlanItem("large-text", title, "阅读", done)) else emptyList() }),
-                                true, 0, {}, 0, {}, false, {}, false, false, {}, true,
-                                onToggle = { done = !done; toggles++ }, onPlanner = {})
+                                selectedDay = 0, onDay = {}, overview = false, onOverview = {},
+                                reduceMotion = true, onToggle = { done = !done; toggles++ })
                         }
                     }
                 }
             }
         }
-        compose.onNodeWithContentDescription("完成：$title").performScrollTo().assertIsDisplayed()
+        val card = compose.onNodeWithTag("plan_large-text", useUnmergedTree = true)
+        card.performScrollTo().assertIsDisplayed().assertValueEquals("未完成")
         screenshot("05-large-text-day.png")
-        compose.onNodeWithContentDescription("完成：$title").performClick()
-        compose.onNodeWithContentDescription("取消完成：$title").assertIsOn()
+        card.performClick()
+        compose.onNodeWithTag("plan_detail", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("暂无正文").assertIsDisplayed()
+        compose.onNodeWithText("关闭").performClick()
+        card.assertValueEquals("未完成")
+        assertEquals(0, toggles)
+        card.performSemanticsAction(SemanticsActions.OnLongClick)
+        card.assertDoesNotExist()
+        compose.onNodeWithTag("companion_large-text", useUnmergedTree = true)
+            .performScrollTo().assertIsDisplayed().assertValueEquals("已完成")
         assertEquals(1, toggles)
     }
 
@@ -157,14 +165,18 @@ class LargeTextUiTest {
             StarLiveTheme {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
                     IdeasScreen(date, mondayOf(date), 0, {}, 6, {}, WeekPlan.empty(),
-                        onAdd = { week, day, _, _ -> addedWeek = week; addedDay = day }, onPlanner = {})
+                        onAdd = { week, day, _, _, _ ->
+                            addedWeek = week
+                            addedDay = day
+                        }, onPlanner = {})
                 }
             }
         }
         compose.onNodeWithTag("idea_custom", useUnmergedTree = true).performScrollTo().performClick()
-        compose.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.SetText) {
-            it(AnnotatedString("把这份想法留在原来的星期日"))
-        }
+        compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) {
+                it(AnnotatedString("把这份想法留在原来的星期日"))
+            }
         compose.runOnIdle { date = LocalDate.of(2026, 11, 16) }
         compose.onNodeWithText("保存到草稿").performClick()
         assertEquals("2026-11-09", addedWeek)
@@ -181,12 +193,14 @@ class LargeTextUiTest {
         compose.setContent {
             StarLiveTheme {
                 TaskEditorDialog(original, "导入的自定义类别", true, {},
-                    onSave = { title, category -> savedTitle = title; savedCategory = category })
+                    onSave = { title, category, _ ->
+                        savedTitle = title
+                        savedCategory = category
+                    })
             }
         }
-        compose.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.SetText) {
-            it(AnnotatedString(replacement))
-        }
+        compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(replacement)) }
         compose.onNodeWithText("保存到草稿").performClick()
         assertEquals(replacement, savedTitle)
         assertEquals("导入的自定义类别", savedCategory)

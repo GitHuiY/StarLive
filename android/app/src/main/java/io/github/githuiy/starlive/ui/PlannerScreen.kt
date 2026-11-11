@@ -36,8 +36,8 @@ private data class ItemTarget(val week: String, val day: Int, val index: Int, va
 fun PlannerScreen(
     today: LocalDate, monday: LocalDate, offset: Int, onOffset: (Int) -> Unit,
     day: Int, onDay: (Int) -> Unit, draft: WeekPlan, confirmed: Boolean, onIdeas: () -> Unit,
-    onAdd: (String, Int, String, String) -> Unit,
-    onUpdate: (String, Int, String, String, String) -> Unit,
+    onAdd: (String, Int, String, String, String) -> Unit,
+    onUpdate: (String, Int, String, String, String, String) -> Unit,
     onDelete: (String, Int, String) -> Unit,
     onMoveBy: (String, Int, String, Int) -> Unit,
     onMoveToDay: (String, Int, String, Int) -> Unit,
@@ -81,7 +81,7 @@ fun PlannerScreen(
                     }
                 }
                 TextButton(onClick = { editor = EditTarget(week, day, item) },
-                    modifier = Modifier.fillMaxWidth().testTag("planner_edit_${item.id}")) { Text("编辑名称与类别") }
+                    modifier = Modifier.fillMaxWidth().testTag("planner_edit_${item.id}")) { Text("编辑事项") }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     TextButton(onClick = { onMoveBy(week, day, item.id, -1) },
                         enabled = index > 0, modifier = Modifier.sizeIn(minHeight = 48.dp).semantics {
@@ -116,9 +116,9 @@ fun PlannerScreen(
     }
     editor?.let { target ->
         TaskEditorDialog(target.item?.title.orEmpty(), target.item?.category ?: "喜欢",
-            target.item != null, { editor = null }) { title, category ->
-            if (target.item == null) onAdd(target.week, target.day, title, category)
-            else onUpdate(target.week, target.day, target.item.id, title, category)
+            target.item != null, { editor = null }, initialBody = target.item?.body.orEmpty()) { title, category, body ->
+            if (target.item == null) onAdd(target.week, target.day, title, category, body)
+            else onUpdate(target.week, target.day, target.item.id, title, category, body)
             editor = null
         }
     }

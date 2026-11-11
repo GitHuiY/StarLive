@@ -41,7 +41,6 @@ fun SpaceScreen(settings: ReminderSettings, timezone: String,
             perAppOn ?: current.perAppDailyEnabled, totalOn ?: current.totalDailyEnabled)
     }
     Column(verticalArrangement = Arrangement.spacedBy(17.dp)) {
-        PageHeading("MAKE ROOM FOR LIFE", "抬起头，\n生活在这里。", "不是责备自己。只是多一次，把注意力带回来的机会。")
         monitoringContent()
         ThresholdCard("连续使用提醒", "所选应用切换接续；离开或锁屏两分钟内返回接续，间隔不计入使用时长。",
             settings.continuousMinutes, settings.continuousEnabled,
@@ -63,7 +62,7 @@ fun SpaceScreen(settings: ReminderSettings, timezone: String,
         }
         SkyCard {
             Text("把期待，好好保存。", style = MaterialTheme.typography.titleLarge)
-            Text("手动备份包含已确认计划、草稿、完成状态和提醒设置；示例体验不包含在内。",
+            Text("手动备份包含已确认计划、草稿、完成状态和提醒设置。",
                 color = Muted, style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = onExport, enabled = !backupBusy,
                 modifier = Modifier.fillMaxWidth().testTag("backup_export")) { Text("导出本地备份") }

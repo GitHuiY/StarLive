@@ -90,6 +90,38 @@ public final class PlanEngineTest {
         assertTrue(state.weeks.get(WEEK).days.get(0).get(1).done);
     }
 
+    @Test public void bodyFollowsTheItemThroughDraftEditsAndCompletionChanges() {
+        String originalBody = "挑出要留下的衣物\n收好换季用品";
+        String editedBody = "先整理衣柜\n 再收好换季用品 ";
+        AppState state = engine.addDraftItem(AppState.empty(), WEEK, 0, "整理衣物", "家务", originalBody);
+        state = engine.addDraftItem(state, WEEK, 0, "读书", "阅读");
+        state = engine.confirmDraft(state, WEEK);
+        String id = firstId(state);
+
+        state = engine.toggleCompletion(state, WEEK, 0, id);
+        assertEquals(originalBody, state.weeks.get(WEEK).days.get(0).get(0).body);
+        state = engine.updateDraftItem(state, WEEK, 0, id, "整理衣物", "休息", editedBody);
+        state = engine.updateDraftItem(state, WEEK, 0, id, "整理衣物", "家务");
+        assertEquals(originalBody, state.weeks.get(WEEK).days.get(0).get(0).body);
+        assertEquals(editedBody, state.drafts.get(WEEK).days.get(0).get(0).body);
+
+        state = engine.moveDraftItem(state, WEEK, 0, id, 0, 1);
+        state = engine.confirmDraft(state, WEEK);
+        PlanItem reordered = state.weeks.get(WEEK).days.get(0).get(1);
+        assertEquals(id, reordered.id);
+        assertEquals(editedBody, reordered.body);
+        assertTrue(reordered.done);
+
+        state = engine.moveDraftItem(state, WEEK, 0, id, 6, 0);
+        state = engine.confirmDraft(state, WEEK);
+        PlanItem moved = state.weeks.get(WEEK).days.get(6).get(0);
+        assertEquals(id, moved.id);
+        assertEquals(editedBody, moved.body);
+        assertFalse(moved.done);
+        state = engine.updateDraftItem(state, WEEK, 6, id, "整理衣物", "家务", "");
+        assertEquals("", engine.confirmDraft(state, WEEK).weeks.get(WEEK).days.get(6).get(0).body);
+    }
+
     @Test public void duplicateIdeasAreDedupedPerDayAndBlankRowsAreFiltered() {
         AppState state = engine.addDraftItem(AppState.empty(), WEEK, 0, "散步", "运动");
         state = engine.addDraftItem(state, WEEK, 0, " 散步 ", "探索");
