@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,7 +36,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -59,7 +57,6 @@ import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.githuiy.starlive.core.PlanItem
@@ -84,7 +81,9 @@ private class PlanDrag(
 fun HomeScreen(
     today: LocalDate, monday: LocalDate, week: WeekPlan,
     selectedDay: Int, onDay: (Int) -> Unit, overview: Boolean, onOverview: () -> Unit,
-    reduceMotion: Boolean, onToggle: (PlanItem) -> Unit, pageScroll: ScrollState? = null
+    reduceMotion: Boolean, onToggle: (PlanItem) -> Unit, pageScroll: ScrollState? = null,
+    externalOverview: Boolean = false, focusProgress: Float = if (overview) 0f else 1f,
+    onSkyBounds: (Rect) -> Unit = {}
 ) {
     val date = monday.plusDays(selectedDay.toLong())
     val items = week.days[selectedDay]
@@ -154,25 +153,44 @@ fun HomeScreen(
         if (day.isEmpty()) 0f else day.count { it.done }.toFloat() / day.size
     }
     val todayIndex = if (today in monday..monday.plusDays(6)) today.dayOfWeek.value - 1 else -1
-    val mapHeight by animateDpAsState(if (overview) 348.dp else 212.dp,
+    val mapHeight by animateDpAsState(if (overview && !externalOverview) 348.dp else 212.dp,
         tween(if (reduceMotion) 0 else 800), label = "sky-height")
+    val focusedOpacity = if (externalOverview) focusedSkyOpacity(focusProgress) else 1f
+    val viewport = if (externalOverview) Modifier.onGloballyPositioned { coordinates ->
+        onSkyBounds(Rect(coordinates.positionInRoot(),
+            Size(coordinates.size.width.toFloat(), coordinates.size.height.toFloat())))
+    } else Modifier
 
     Box(Modifier.fillMaxWidth().onGloballyPositioned { homeOrigin = it.positionInRoot() }) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (overview) Text(weekRange(monday), color = Muted, style = MaterialTheme.typography.bodySmall)
-            Box(Modifier.fillMaxWidth().height(mapHeight).testTag(if (overview) "overview" else "focused_sky")) {
-                WeekStarMap(ratios, todayIndex, selectedDay, overview, reduceMotion, onDay,
-                    onOverview = {
-                        if (focusedCompanion != null) closeCompanion() else onOverview()
-                    }, modifier = Modifier.matchParentSize(),
-                    companions = if (overview) emptyList() else companions,
-                    focusedCompanionId = focusedCompanion?.id,
-                    onCompanion = {
-                        if (activeDrag == null) focusId = it.id
-                    },
-                    onPrimaryBounds = { primaryBounds = it },
-                    highlightPrimary = dropTargetHighlighted)
-                if (!overview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
+            if (overview && !externalOverview) {
+                Text(weekRange(monday), color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            val mapTag = when {
+                !overview -> Modifier.testTag("focused_sky")
+                !externalOverview -> Modifier.testTag("overview")
+                else -> Modifier
+            }
+            Box(Modifier.fillMaxWidth().height(mapHeight).then(viewport).then(mapTag)) {
+                if (!externalOverview || !overview || focusProgress > 0f) {
+                    WeekStarMap(ratios, todayIndex, selectedDay, overview && !externalOverview, reduceMotion, onDay,
+                        onOverview = {
+                            if (focusedCompanion != null) closeCompanion() else onOverview()
+                        }, modifier = Modifier.matchParentSize().graphicsLayer { alpha = focusedOpacity },
+                        companions = if (overview) emptyList() else companions,
+                        focusedCompanionId = focusedCompanion?.id,
+                        onCompanion = {
+                            if (activeDrag == null) focusId = it.id
+                        },
+                        onPrimaryBounds = { primaryBounds = it },
+                        highlightPrimary = dropTargetHighlighted, interactive = !externalOverview || !overview)
+                }
+                if (overview && externalOverview) {
+                    Text(weekRange(monday), color = Muted, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.graphicsLayer { alpha = 1f - focusProgress })
+                }
+                if (!overview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
+                    .graphicsLayer { alpha = focusedOpacity },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(ShortWeekdays[selectedDay], color = Gold, style = MaterialTheme.typography.labelSmall)
@@ -183,7 +201,7 @@ fun HomeScreen(
                 }
             }
             if (!overview) {
-                SkyCard(Modifier.testTag("day_panel")) {
+                SkyCard(Modifier.testTag("day_panel").graphicsLayer { alpha = focusedOpacity }) {
                     Text("${if (date == today) "今天 · " else ""}${date.monthValue} 月 ${date.dayOfMonth} 日",
                         color = Gold.copy(alpha = .8f), style = MaterialTheme.typography.bodySmall)
                     if (unfinished.isEmpty()) {
@@ -222,17 +240,6 @@ fun HomeScreen(
                         }
                     }
                 }
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 15.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(Modifier.size(3.dp).clip(CircleShape).background(Gold))
-                    Spacer(Modifier.width(7.dp))
-                    Text("按你的节奏，慢慢点亮", color = Muted.copy(alpha = .7f),
-                        style = MaterialTheme.typography.labelSmall)
-                }
-                Text("把日子还给自己", color = Ink.copy(alpha = .7f),
-                    style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Serif)
             }
         }
         if (drag != null) {

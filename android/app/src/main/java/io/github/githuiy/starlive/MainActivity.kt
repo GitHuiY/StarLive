@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -81,6 +82,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var model: PlanViewModel
     private lateinit var monitor: MonitorController
     private var openMonitorRequest by mutableIntStateOf(0)
+    private var debugIntroRequest by mutableIntStateOf(0)
+    private var allowStartupIntro by mutableStateOf(false)
     private var today by mutableStateOf(LocalDate.now())
     private var timezone by mutableStateOf(ZoneId.systemDefault().id)
     private var reduceMotion by mutableStateOf(false)
@@ -123,10 +126,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Night.toArgb()),
-            navigationBarStyle = SystemBarStyle.dark(Night.toArgb()))
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
+        allowStartupIntro = savedInstanceState == null && isTaskRoot
         model = ViewModelProvider(this)[PlanViewModel::class.java]
         monitor = MonitorController.get(this)
-        if (savedInstanceState == null) consumeMonitorIntent(intent)
+        if (savedInstanceState == null) consumeLaunchIntent(intent)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_DATE_CHANGED)
             addAction(Intent.ACTION_TIME_CHANGED)
@@ -147,6 +151,7 @@ class MainActivity : ComponentActivity() {
                     onImport = { importDocument.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
                     onRestore = model::previewRestore,
                     onCalendarTick = ::refreshCalendar, openMonitorRequest = openMonitorRequest,
+                    debugIntroRequest = debugIntroRequest, allowStartupIntro = allowStartupIntro,
                     monitoringContent = {
                         MonitorPanel(monitor, today,
                             onUsageAccess = { openSystemSettings(monitor.usageAccessIntent()) },
@@ -167,17 +172,29 @@ class MainActivity : ComponentActivity() {
         } catch (_: RuntimeException) { false }
     }
 
+    override fun onPause() {
+        allowStartupIntro = false
+        super.onPause()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        consumeMonitorIntent(intent)
+        consumeLaunchIntent(intent)
     }
 
-    private fun consumeMonitorIntent(intent: Intent) {
+    private fun consumeLaunchIntent(intent: Intent) {
         if (intent.getBooleanExtra(MonitorController.OPEN_SCREEN_EXTRA, false)) {
             intent.removeExtra(MonitorController.OPEN_SCREEN_EXTRA)
             openMonitorRequest++
+        } else if (BuildConfig.DEBUG && intent.getBooleanExtra(DEBUG_REPLAY_MONDAY_INTRO, false)) {
+            debugIntroRequest++
         }
+        intent.removeExtra(DEBUG_REPLAY_MONDAY_INTRO)
+    }
+
+    private companion object {
+        const val DEBUG_REPLAY_MONDAY_INTRO = "io.github.githuiy.starlive.DEBUG_REPLAY_MONDAY_INTRO"
     }
 
     private fun allowNotifications() {

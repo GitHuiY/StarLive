@@ -1,12 +1,20 @@
 package io.github.githuiy.starlive.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -32,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,19 +49,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.repeatOnLifecycle
+import io.github.githuiy.starlive.BuildConfig
+import io.github.githuiy.starlive.R
 import io.github.githuiy.starlive.core.AppState
 import io.github.githuiy.starlive.core.PlanEngine
 import io.github.githuiy.starlive.data.BackupPreview
 import io.github.githuiy.starlive.data.PlanRepository
+import java.time.DayOfWeek
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 
@@ -63,29 +86,52 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     backupPreview: BackupPreview?, restoring: Boolean, onCancelPreview: () -> Unit,
     onConfirmPreview: () -> Unit, onExport: () -> Unit, onImport: () -> Unit,
     onRestore: () -> Unit, onCalendarTick: () -> Unit,
-    openMonitorRequest: Int, monitoringContent: @Composable () -> Unit) {
+    openMonitorRequest: Int, debugIntroRequest: Int = 0, allowStartupIntro: Boolean = true,
+    monitoringContent: @Composable () -> Unit) {
     var page by rememberSaveable { mutableStateOf("stars") }
     var offset by rememberSaveable { mutableStateOf(0) }
     var selectedDay by rememberSaveable { mutableStateOf(today.dayOfWeek.value - 1) }
     var overview by rememberSaveable { mutableStateOf(true) }
-    var introConsumed by rememberSaveable { mutableStateOf(false) }
     var followToday by rememberSaveable { mutableStateOf(true) }
+    var autoFocusToday by rememberSaveable { mutableStateOf(true) }
     val snackbar = remember { SnackbarHostState() }
     val scroll = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    var introDecisionMade by rememberSaveable { mutableStateOf(false) }
+    var handledDebugRequest by remember { mutableIntStateOf(0) }
+    var playingIntro by remember { mutableStateOf(false) }
+    var settlingIntro by remember { mutableStateOf(false) }
+    val posterOpacity = remember { Animatable(1f) }
+    var focusBounds by remember { mutableStateOf<Rect?>(null) }
+    val focusProgress by animateFloatAsState(
+        targetValue = if (overview) 0f else 1f,
+        animationSpec = tween(if (reduceMotion) 0 else if (overview) 1100 else 800, easing = FastOutSlowInEasing),
+        label = "day-sky-camera"
+    )
     val monday = mondayOf(today).plusWeeks(offset.toLong())
     val weekKey = monday.toString()
 
-    fun navigate(target: String) { introConsumed = true; page = target }
+    fun navigate(target: String) {
+        introDecisionMade = true
+        autoFocusToday = false
+        playingIntro = false
+        settlingIntro = false
+        page = target
+    }
     fun chooseDay(day: Int) {
-        introConsumed = true; selectedDay = day; overview = false
+        introDecisionMade = true; selectedDay = day; overview = false
+        autoFocusToday = false
+        playingIntro = false
+        settlingIntro = false
         followToday = offset == 0 && day == today.dayOfWeek.value - 1
     }
     fun chooseWeek(value: Int) {
-        introConsumed = true; offset = value; overview = true; followToday = value == 0
+        introDecisionMade = true; offset = value; overview = true; followToday = value == 0
+        autoFocusToday = false
     }
     fun chooseEditorDay(value: Int) {
-        introConsumed = true; selectedDay = value
+        introDecisionMade = true; selectedDay = value
         followToday = offset == 0 && value == today.dayOfWeek.value - 1
     }
     LaunchedEffect(openMonitorRequest) {
@@ -94,11 +140,44 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
             scroll.scrollTo(0)
         }
     }
-    LaunchedEffect(data != null, page, introConsumed, today) {
-        if (data != null && page == "stars" && !introConsumed) {
+    val dataReady = data != null && !loading
+    val resumed = lifecycleState == Lifecycle.State.RESUMED
+    LaunchedEffect(dataReady, page, offset, resumed, openMonitorRequest, debugIntroRequest, reduceMotion, allowStartupIntro) {
+        if (introDecisionMade || !dataReady || !resumed) return@LaunchedEffect
+        introDecisionMade = true
+        playingIntro = allowStartupIntro && !reduceMotion && page == "stars" && offset == 0 &&
+            overview && openMonitorRequest == 0 && debugIntroRequest == 0
+    }
+    val waitingToFocus = dataReady && introDecisionMade && !playingIntro && !settlingIntro &&
+        autoFocusToday && resumed && page == "stars" && offset == 0 && overview &&
+        today.dayOfWeek != DayOfWeek.MONDAY
+    LaunchedEffect(waitingToFocus, today) {
+        if (waitingToFocus) {
             delay(2500)
-            selectedDay = today.dayOfWeek.value - 1
-            overview = false; followToday = true; introConsumed = true
+            if (lifecycleOwner.lifecycle.currentState == Lifecycle.State.RESUMED && autoFocusToday &&
+                page == "stars" && overview && offset == 0) {
+                chooseDay(today.dayOfWeek.value - 1)
+            }
+        }
+    }
+    LaunchedEffect(debugIntroRequest, dataReady, resumed) {
+        if (BuildConfig.DEBUG && debugIntroRequest > handledDebugRequest && dataReady && resumed) {
+            handledDebugRequest = debugIntroRequest
+            introDecisionMade = true
+            autoFocusToday = false
+            page = "stars"
+            offset = 0
+            overview = true
+            scroll.scrollTo(0)
+            settlingIntro = false
+            playingIntro = true
+        }
+    }
+    LaunchedEffect(settlingIntro) {
+        if (settlingIntro) {
+            posterOpacity.animateTo(0f, tween(if (reduceMotion) 0 else 260))
+            settlingIntro = false
+            posterOpacity.snapTo(1f)
         }
     }
     LaunchedEffect(today, timezone) {
@@ -114,12 +193,19 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         if (notice != null) { snackbar.showSnackbar(notice); onNoticeConsumed() }
     }
     BackHandler(enabled = page != "stars" || !overview) {
-        introConsumed = true
+        introDecisionMade = true
+        autoFocusToday = false
         if (page != "stars") page = "stars"
         overview = true
     }
     StarBackdrop(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
-        Scaffold(containerColor = androidx.compose.ui.graphics.Color.Transparent, contentColor = Ink,
+        val homeSky = page == "stars" && data != null
+        if (homeSky) {
+            Image(painterResource(R.drawable.monday_sky_plate), contentDescription = null,
+                modifier = Modifier.fillMaxSize().background(Night), contentScale = ContentScale.Fit)
+            if (focusProgress < 1f) SkyMotto(Modifier.graphicsLayer { alpha = 1f - focusProgress })
+        }
+        Scaffold(containerColor = Color.Transparent, contentColor = Ink,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 10.dp),
@@ -137,12 +223,27 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                 }
             },
             bottomBar = {
-                NavigationBar(containerColor = Night.copy(alpha = .96f), windowInsets = WindowInsets.navigationBars) {
+                NavigationBar(
+                    modifier = if (homeSky) Modifier.background(Brush.verticalGradient(
+                        listOf(Color.Transparent, Night.copy(alpha = .62f)))) else Modifier,
+                    containerColor = if (homeSky) Color.Transparent else Night,
+                    windowInsets = WindowInsets.navigationBars
+                ) {
                     listOf(Triple("stars", "✦", "Starmap"), Triple("ideas", "✧", "Sparks"),
                         Triple("space", "☾", "Daylight")).forEach { (route, icon, label) ->
-                        NavigationBarItem(selected = page == route, onClick = { navigate(route) },
+                        val selected = page == route
+                        NavigationBarItem(selected = selected, onClick = { navigate(route) },
                             icon = { Text(icon, fontSize = 23.sp, fontFamily = FontFamily.Serif) },
-                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                shadow = Shadow(Night, Offset(0f, 2f), 5f))) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Night,
+                                selectedTextColor = Color(0xFFFFF3D8),
+                                indicatorColor = Color(0xFFFFE7B4),
+                                unselectedIconColor = Color(0xFFDBE6F5),
+                                unselectedTextColor = Color(0xFFE9F0FC)
+                            ),
                             modifier = Modifier.testTag("nav_$route"))
                     }
                 }
@@ -162,10 +263,13 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         TextButton(onClick = onRestore, enabled = !backupBusy) { Text("预览上次覆盖前的备份") }
                     }
                     page == "stars" -> HomeScreen(today, monday, PlanEngine.confirmed(data, weekKey),
-                        selectedDay, ::chooseDay, overview, { introConsumed = true; overview = true },
+                        selectedDay, ::chooseDay, overview, {
+                            introDecisionMade = true; autoFocusToday = false; overview = true
+                        },
                         reduceMotion, onToggle = { item ->
                             repository.setCompletion(weekKey, selectedDay, item.id, !item.done)
-                        }, pageScroll = scroll)
+                        }, pageScroll = scroll, externalOverview = true, focusProgress = focusProgress,
+                        onSkyBounds = { focusBounds = it })
                     page == "ideas" -> IdeasScreen(today, monday, offset, ::chooseWeek,
                         selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), repository::addDraftItem,
                         onPlanner = { navigate("planner") }, reduceMotion = reduceMotion)
@@ -185,6 +289,27 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                 Spacer(Modifier.height(12.dp))
             }
         }
+        if (homeSky) {
+            val week = PlanEngine.confirmed(data, weekKey)
+            val ratios = remember(week) {
+                week.days.map { day -> if (day.isEmpty()) 0f else day.count { it.done }.toFloat() / day.size }
+            }
+            val todayIndex = if (today in monday..monday.plusDays(6)) today.dayOfWeek.value - 1 else -1
+            MondayLandingSky(ratios, todayIndex, ::chooseDay, Modifier.fillMaxSize(),
+                overview = overview, selectedDay = selectedDay, focusBounds = focusBounds,
+                focusProgress = focusProgress, reduceMotion = reduceMotion)
+        }
+        if (settlingIntro) {
+            Image(painterResource(R.drawable.monday_intro_landing), contentDescription = null,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = posterOpacity.value }
+                    .background(Night), contentScale = ContentScale.Fit)
+        }
+        if (playingIntro) {
+            MondayIntroPlayer { completed ->
+                settlingIntro = completed && homeSky && overview
+                playingIntro = false
+            }
+        }
         backupPreview?.let { preview ->
             val summary = preview.summary
             AlertDialog(onDismissRequest = { if (!backupBusy) onCancelPreview() },
@@ -202,5 +327,25 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                     modifier = Modifier.testTag("backup_confirm")) { Text(if (backupBusy) "正在恢复…" else "确认覆盖并恢复") } },
                 dismissButton = { TextButton(onClick = onCancelPreview, enabled = !backupBusy) { Text("取消，保留现有数据") } })
         }
+    }
+}
+
+@Composable
+private fun SkyMotto(modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        // Anchor the copy to the fitted illustration just above the character.
+        val artWidth = minOf(maxWidth, maxHeight * .45f)
+        val artHeight = artWidth / .45f
+        Text(
+            "按你的节奏，慢慢点亮",
+            modifier = Modifier.absoluteOffset(
+                x = (maxWidth - artWidth) / 2 + artWidth * .06f,
+                y = (maxHeight - artHeight) / 2 + artHeight * .55f
+            ),
+            color = Ink,
+            style = MaterialTheme.typography.labelSmall.copy(
+                shadow = Shadow(Night, Offset(0f, 1f), 4f)
+            )
+        )
     }
 }

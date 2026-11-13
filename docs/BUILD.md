@@ -91,6 +91,19 @@ Android 模块 compileSdk/targetSdk 为 35、minSdk 为 26，这是工程选择�
 
 ## 真机连接
 
+### 调试启动开场
+
+通过 Android Studio 的 Run 向已连接的设备部署 debug APK。应用包含本地视频资源，首次部署需要完整构建。
+启动后可用已连接的设备重播，`<device-id>` 替换为当前设备标识。
+
+```powershell
+./scripts/adb.ps1 -s <device-id> shell am start --activity-single-top -n io.github.githuiy.starlive/.MainActivity --ez io.github.githuiy.starlive.DEBUG_REPLAY_MONDAY_INTRO true
+```
+
+调试重播从全周星图开始，适用于任意日期。关闭最近任务中的 StarLive 后重新打开，会再次播放开场。从后台回到现有页面或旋转屏幕时不重播。可点击右上角的“跳过”直接进入首页。
+
+### 查看设备
+
 ```powershell
 ./scripts/adb.ps1 devices -l
 ```

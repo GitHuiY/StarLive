@@ -51,13 +51,17 @@ import kotlin.math.roundToInt
 val Weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 val ShortWeekdays = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 val StarNames = listOf("天枢", "天璇", "天玑", "天权", "玉衡", "开阳", "摇光")
-private val StarPositions = listOf(
+internal val StarPositions = listOf(
     Offset(.83f, .20f), Offset(.88f, .39f), Offset(.67f, .53f),
     Offset(.57f, .41f), Offset(.407f, .435f), Offset(.238f, .445f), Offset(.08f, .61f)
 )
 internal val Starlight = Color(0xFF9ACFEF)
 internal const val CompanionFocusMillis = 420
-private const val DayZoom = 2.75f
+internal const val DayZoom = 2.75f
+internal const val DayStarAnchorY = .34f
+internal const val FocusedSkyBlendStart = .84f
+internal fun focusedSkyOpacity(progress: Float): Float =
+    ((progress - FocusedSkyBlendStart) / (1f - FocusedSkyBlendStart)).coerceIn(0f, 1f)
 private val CompanionBlue = Color(0xFF80B4E4)
 private val CompanionSlots = listOf(
     Offset(54f, -33f), Offset(-54f, -38f), Offset(54f, 21f), Offset(-54f, 16f),
@@ -72,11 +76,11 @@ fun WeekStarMap(
     modifier: Modifier = Modifier,
     companions: List<PlanItem> = emptyList(), focusedCompanionId: String? = null,
     onCompanion: (PlanItem) -> Unit = {}, onPrimaryBounds: (Rect?) -> Unit = {},
-    highlightPrimary: Boolean = false
+    highlightPrimary: Boolean = false, interactive: Boolean = true
 ) {
     val layoutDensity = LocalDensity.current
     val updatePrimaryBounds by rememberUpdatedState(onPrimaryBounds)
-    val primaryAvailable = !overview && focusedCompanionId == null
+    val primaryAvailable = interactive && !overview && focusedCompanionId == null
     DisposableEffect(primaryAvailable, selectedDay) {
         if (!primaryAvailable) updatePrimaryBounds(null)
         onDispose { if (primaryAvailable) updatePrimaryBounds(null) }
@@ -119,7 +123,7 @@ fun WeekStarMap(
         val zoom by animateFloatAsState(if (overview) 1f else DayZoom, tween(duration), label = "star-zoom")
         val cameraX by animateFloatAsState(cameraTarget.x, tween(duration), label = "star-camera-x")
         val cameraY by animateFloatAsState(cameraTarget.y, tween(duration), label = "star-camera-y")
-        val anchorY by animateFloatAsState(if (overview) .5f else .34f,
+        val anchorY by animateFloatAsState(if (overview) .5f else DayStarAnchorY,
             tween(duration), label = "star-anchor")
         val displayedPage = if (focusedIndex >= 0) focusedIndex / pageSize else page.coerceAtMost(lastPage)
         val firstSlotIndex = displayedPage * pageSize
@@ -211,11 +215,11 @@ fun WeekStarMap(
                 drawCircle(Starlight.copy(alpha = .76f * brightness), .85.dp.toPx(), center)
             }
         }
-        if (!overview) Box(Modifier.matchParentSize().testTag("sky_background")
+        if (interactive && !overview) Box(Modifier.matchParentSize().testTag("sky_background")
             .semantics { contentDescription = if (focusedIndex >= 0) "回到主星" else "回到整片星空" }
             .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onOverview))
         for (index in 0..6) {
-            if (overview || (primaryAvailable && index == selectedDay)) {
+            if (interactive && (overview || (primaryAvailable && index == selectedDay))) {
                 val center = point(index)
                 val dropBounds = if (overview) Modifier else Modifier.onGloballyPositioned { coordinates ->
                     updatePrimaryBounds(coordinates.boundsInRoot().takeIf {
@@ -231,7 +235,7 @@ fun WeekStarMap(
             }
         }
         visibleCompanions.forEachIndexed { slot, item ->
-            if (focusedIndex < 0 || item.id == focusedCompanionId) {
+            if (interactive && (focusedIndex < 0 || item.id == focusedCompanionId)) {
                 val center = point(companionPosition(slot))
                 Box(Modifier.offset { IntOffset(
                     (center.x - 24.dp.toPx()).roundToInt(),
@@ -243,7 +247,7 @@ fun WeekStarMap(
                     onClick = { onCompanion(item) }))
             }
         }
-        if (!overview && focusedIndex < 0) {
+        if (interactive && !overview && focusedIndex < 0) {
             if (displayedPage > 0) TextButton(onClick = { page = displayedPage - 1 },
                 modifier = Modifier.align(Alignment.BottomStart)
                     .semantics { contentDescription = "上一组伴星" }) {

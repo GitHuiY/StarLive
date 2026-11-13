@@ -3,6 +3,7 @@ package io.github.githuiy.starlive
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.provider.Settings
 import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -27,14 +28,17 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.AnnotatedString
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.githuiy.starlive.core.AppState
 import io.github.githuiy.starlive.core.BackupCodec
 import io.github.githuiy.starlive.core.PlanEngine
+import io.github.githuiy.starlive.ui.StarNames
 import java.io.File
 import java.time.LocalDate
+import java.time.DayOfWeek
 import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -117,9 +121,17 @@ class StarLiveUiTest {
     }
 
     private fun launch() {
+        val resolver = ApplicationProvider.getApplicationContext<Application>().contentResolver
+        // Skip platform video during the initial host-only launch. Subsequent
+        // gestures still exercise the real Compose animations.
+        Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         scenario = ActivityScenario.launch(MainActivity::class.java)
         opened = true
         compose.waitUntil(15_000) { exists("overview") || exists("focused_sky") }
+        compose.waitForIdle()
+        Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        scenario.moveToState(Lifecycle.State.STARTED)
+        scenario.moveToState(Lifecycle.State.RESUMED)
     }
 
     private fun exists(tag: String): Boolean = runCatching {
@@ -188,8 +200,13 @@ class StarLiveUiTest {
 
     private fun selectMonday() {
         goOverview()
-        contentClick("star_0")
+        tapMondayStar()
         compose.waitUntil(5_000) { exists("day_panel") }
+    }
+
+    private fun tapMondayStar() {
+        compose.onNodeWithTag("star_0", useUnmergedTree = true).assertIsDisplayed()
+            .performTouchInput { click() }
     }
 
     private fun mondayItemId(week: String, title: String): String {
@@ -254,9 +271,18 @@ class StarLiveUiTest {
         File(folder, name).outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
 
-    @Test fun startupFocusesAndBlankSkyReturnsToAStableOverview() {
-        compose.mainClock.advanceTimeBy(3_000)
+    @Test fun startupFocusesTodayExceptOnMondayAndBlankSkyStaysInOverview() {
+        compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(3_500)
+        val day = LocalDate.now().dayOfWeek
+        if (day == DayOfWeek.MONDAY) {
+            compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+            tapMondayStar()
+        }
         compose.waitUntil(5_000) { exists("focused_sky") && exists("day_panel") }
+        if (day != DayOfWeek.MONDAY) {
+            compose.onNodeWithText(StarNames[day.value - 1]).assertIsDisplayed()
+        }
         tapBlankSky()
         compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
         screenshot("01-overview.png")
