@@ -128,6 +128,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Night.toArgb()),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
         allowStartupIntro = savedInstanceState == null && isTaskRoot
+        refreshMotionPreference()
         model = ViewModelProvider(this)[PlanViewModel::class.java]
         monitor = MonitorController.get(this)
         if (savedInstanceState == null) consumeLaunchIntent(intent)
@@ -165,8 +166,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshMotionPreference()
         refreshCalendar()
         monitor.refresh()
+    }
+
+    private fun refreshMotionPreference() {
         reduceMotion = try {
             Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         } catch (_: RuntimeException) { false }

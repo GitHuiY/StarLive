@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.githuiy.starlive.core.PlanItem
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 val Weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 val ShortWeekdays = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -62,6 +63,7 @@ internal const val DayStarAnchorY = .34f
 internal const val FocusedSkyBlendStart = .84f
 internal fun focusedSkyOpacity(progress: Float): Float =
     ((progress - FocusedSkyBlendStart) / (1f - FocusedSkyBlendStart)).coerceIn(0f, 1f)
+internal fun starCompletionLight(ratio: Float): Float = sqrt(ratio.coerceIn(0f, 1f))
 private val CompanionBlue = Color(0xFF80B4E4)
 private val CompanionSlots = listOf(
     Offset(54f, -33f), Offset(-54f, -38f), Offset(54f, 21f), Offset(-54f, 16f),
@@ -160,13 +162,13 @@ fun WeekStarMap(
                 handleLabelWidth + 3.dp.toPx() > (StarPositions[4].x - StarPositions[5].x) * widthPx
             for (index in 0..6) {
                 val center = point(index)
-                val ratio = lights[index]
+                val light = starCompletionLight(lights[index])
                 val visible = overview || index == selectedDay
                 val alpha = if (visible) 1f else .12f
-                val glow = if (index == todayIndex || ratio > 0f) Gold else Starlight
-                val halo = (26f + ratio * 26f) * density
+                val glow = if (index == todayIndex) Gold else Starlight
+                val halo = (26f + light * 26f) * density
                 drawCircle(Brush.radialGradient(listOf(
-                    glow.copy(alpha = (.24f + ratio * .26f) * alpha), Color.Transparent
+                    glow.copy(alpha = (.24f + light * .26f) * alpha), Color.Transparent
                 ), center, halo), radius = halo, center = center)
                 if (index == todayIndex) drawCircle(
                     Gold.copy(alpha = .38f * alpha), radius = 10.dp.toPx(), center = center,
@@ -174,14 +176,14 @@ fun WeekStarMap(
                 if (highlightPrimary && primaryAvailable && index == selectedDay) {
                     drawCircle(glow.copy(alpha = .52f), 17.dp.toPx(), center, style = Stroke(1.dp.toPx()))
                 }
-                drawCircle(glow.copy(alpha = (.90f + ratio * .10f) * alpha),
-                    (3.2f + ratio * 2.1f).dp.toPx(), center)
+                drawCircle(glow.copy(alpha = (.90f + light * .10f) * alpha),
+                    (3.2f + light * 2.1f).dp.toPx(), center)
                 drawCircle(Ink.copy(alpha = .96f * alpha), 1.5.dp.toPx(), center)
                 if (visible) {
-                    val cross = (7 + ratio * 4).dp.toPx()
-                    drawLine(glow.copy(alpha = (.25f + ratio * .45f) * alpha),
+                    val cross = (7 + light * 4).dp.toPx()
+                    drawLine(glow.copy(alpha = (.25f + light * .45f) * alpha),
                         center - Offset(cross, 0f), center + Offset(cross, 0f), .6.dp.toPx())
-                    drawLine(glow.copy(alpha = (.25f + ratio * .45f) * alpha),
+                    drawLine(glow.copy(alpha = (.25f + light * .45f) * alpha),
                         center - Offset(0f, cross), center + Offset(0f, cross), .6.dp.toPx())
                 }
                 if (overview) {

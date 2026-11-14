@@ -51,19 +51,19 @@ fun SpaceScreen(settings: ReminderSettings, timezone: String,
         ThresholdCard("所选应用每日合计提醒", "所选应用的当日使用时间合计；同时触发多个条件时合并提醒。",
             settings.totalDailyMinutes, settings.totalDailyEnabled,
             { onSettings(changed(total = it)) }, { onSettings(changed(totalOn = it)) }, "total")
-        SkyCard {
+        SkyCard(containerColor = Night.copy(alpha = .68f)) {
             Text("让提醒，轻一点", style = MaterialTheme.typography.titleLarge)
             Text("“要不要，去做一件喜欢的小事？”", color = Gold,
                 style = MaterialTheme.typography.bodyLarge)
             Text("稍后提醒：30 分钟。到期和发送时都在使用所选应用，才会再次提醒。停止监测会取消待发提醒。",
-                color = Muted, style = MaterialTheme.typography.bodyMedium)
+                color = Ink, style = MaterialTheme.typography.bodyMedium)
             Text("统计时区：$timezone · 每日零点重置累计；连续会话可跨午夜。",
-                color = Muted, style = MaterialTheme.typography.bodySmall)
+                color = Ink, style = MaterialTheme.typography.bodySmall)
         }
-        SkyCard {
+        SkyCard(containerColor = Night.copy(alpha = .78f)) {
             Text("把期待，好好保存。", style = MaterialTheme.typography.titleLarge)
             Text("手动备份包含已确认计划、草稿、完成状态和提醒设置。",
-                color = Muted, style = MaterialTheme.typography.bodyMedium)
+                color = Ink, style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = onExport, enabled = !backupBusy,
                 modifier = Modifier.fillMaxWidth().testTag("backup_export")) { Text("导出本地备份") }
             OutlinedButton(onClick = onImport, enabled = !backupBusy,
@@ -82,7 +82,7 @@ private fun ThresholdCard(title: String, description: String, value: Int, enable
     val focus = LocalFocusManager.current
     val parsed = editing.toIntOrNull()
     val valid = parsed != null && parsed in 1..1440
-    SkyCard {
+    SkyCard(containerColor = Night.copy(alpha = .82f)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             Switch(enabled, onCheckedChange = onEnabled,

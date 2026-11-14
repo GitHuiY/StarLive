@@ -62,9 +62,10 @@ fun mondayOf(date: LocalDate): LocalDate = date.minusDays((date.dayOfWeek.value 
 fun weekRange(monday: LocalDate): String = "${monday.format(DateTimeFormatter.ofPattern("M.d"))} — ${monday.plusDays(6).format(DateTimeFormatter.ofPattern("M.d"))}"
 
 @Composable
-fun SkyCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun SkyCard(modifier: Modifier = Modifier, containerColor: Color = Panel.copy(alpha = .88f),
+    content: @Composable ColumnScope.() -> Unit) {
     Card(modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Panel.copy(alpha = .88f)),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(1.dp, Line.copy(alpha = .65f))) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }

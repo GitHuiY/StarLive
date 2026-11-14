@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -40,10 +41,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -66,8 +69,16 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 private const val CompletionHoldMillis = 1_500L
+private val DayPlanTileColor = Night.copy(alpha = .64f)
 
 private data class DragEnd(val center: Offset, val absorbed: Boolean)
+
+private fun Modifier.starLabelAnchor(onAnchor: (Offset) -> Unit) = onGloballyPositioned { coordinates ->
+    val baseline = coordinates[FirstBaseline]
+    if (baseline != Int.MIN_VALUE) {
+        onAnchor(coordinates.positionInRoot() + Offset(coordinates.size.width / 2f, baseline.toFloat()))
+    }
+}
 
 private class PlanDrag(
     val item: PlanItem, val card: Rect, val grip: Offset, pointerInRoot: Offset
@@ -83,7 +94,9 @@ fun HomeScreen(
     selectedDay: Int, onDay: (Int) -> Unit, overview: Boolean, onOverview: () -> Unit,
     reduceMotion: Boolean, onToggle: (PlanItem) -> Unit, pageScroll: ScrollState? = null,
     externalOverview: Boolean = false, focusProgress: Float = if (overview) 0f else 1f,
-    onSkyBounds: (Rect) -> Unit = {}
+    canCompletePlans: Boolean = true,
+    onSkyBounds: (Rect) -> Unit = {},
+    onWeekdayAnchor: (Offset) -> Unit = {}, onStarNameAnchor: (Offset) -> Unit = {}
 ) {
     val date = monday.plusDays(selectedDay.toLong())
     val items = week.days[selectedDay]
@@ -189,23 +202,31 @@ fun HomeScreen(
                     Text(weekRange(monday), color = Muted, style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.graphicsLayer { alpha = 1f - focusProgress })
                 }
-                if (!overview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
-                    .graphicsLayer { alpha = focusedOpacity },
+                if (!overview || externalOverview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(ShortWeekdays[selectedDay], color = Gold, style = MaterialTheme.typography.labelSmall)
-                    Text(StarNames[selectedDay], style = MaterialTheme.typography.headlineMedium)
-                    Box(Modifier.width(84.dp).height(2.dp).background(Line)) {
+                    // The sky draws both labels through the entire external transition. These
+                    // text nodes still supply their measured baselines and accessibility text.
+                    val labelVisibility = if (overview) Modifier.clearAndSetSemantics {} else Modifier
+                    Text(ShortWeekdays[selectedDay], color = if (externalOverview) Color.Transparent else Gold,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onWeekdayAnchor) else Modifier))
+                    Text(StarNames[selectedDay], color = if (externalOverview) Color.Transparent else Ink,
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onStarNameAnchor) else Modifier))
+                    Box(Modifier.width(84.dp).height(2.dp)
+                        .graphicsLayer { alpha = if (overview) 0f else focusedOpacity }.background(Line)) {
                         Box(Modifier.fillMaxWidth(ratios[selectedDay]).height(2.dp).background(Gold))
                     }
                 }
             }
             if (!overview) {
-                SkyCard(Modifier.testTag("day_panel").graphicsLayer { alpha = focusedOpacity }) {
+                SkyCard(Modifier.testTag("day_panel").graphicsLayer { alpha = focusedOpacity },
+                    containerColor = Night.copy(alpha = .63f)) {
                     Text("${if (date == today) "今天 · " else ""}${date.monthValue} 月 ${date.dayOfMonth} 日",
-                        color = Gold.copy(alpha = .8f), style = MaterialTheme.typography.bodySmall)
+                        color = Color(0xFFFFE7B4), style = MaterialTheme.typography.bodySmall)
                     if (unfinished.isEmpty()) {
-                        Text(if (items.isEmpty()) "当天暂无计划" else "当天计划已完成", color = Muted)
+                        Text(if (items.isEmpty()) "当天暂无计划" else "当天计划已完成", color = Ink)
                     }
                     unfinished.chunked(2).forEach { row ->
                         key(date, row.first().id) {
@@ -213,7 +234,13 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 row.forEach { item ->
                                     key(item.id) {
-                                        DraggablePlanTile(item, Modifier.weight(1f).fillMaxHeight(),
+                                        if (!canCompletePlans) {
+                                            PlanTile(item.title, item.category,
+                                                Modifier.weight(1f).fillMaxHeight().testTag("plan_${item.id}")
+                                                    .clickable(role = Role.Button) { reveal.requestOpen(item.id) },
+                                                containerColor = DayPlanTileColor,
+                                                flash = { reveal.progress(item.id) })
+                                        } else DraggablePlanTile(item, Modifier.weight(1f).fillMaxHeight(),
                                             hidden = drag?.item?.id == item.id,
                                             flash = { reveal.progress(item.id) },
                                             onDetail = {
@@ -255,7 +282,7 @@ fun HomeScreen(
         val close = if (item.done) ::closeCompanion else reveal::close
         StarDetailDialog(item.title, item.category, "plan_detail", onDismiss = close,
             actions = {
-                if (item.done) TextButton(onClick = {
+                if (item.done && canCompletePlans) TextButton(onClick = {
                     closeCompanion()
                     latestToggle(item)
                 }) { Text("恢复为未完成") }
@@ -282,7 +309,7 @@ private fun DraggedPlanTile(drag: PlanDrag, homeOrigin: Offset, absorption: Anim
                 scaleY = scaleX
                 alpha = 1f - shrink
                 shadowElevation = 9.dp.toPx() * alpha
-            }.clearAndSetSemantics { })
+            }.clearAndSetSemantics { }, containerColor = PanelSoft.copy(alpha = .88f))
 }
 
 @Composable
@@ -368,5 +395,5 @@ private fun DraggablePlanTile(item: PlanItem, modifier: Modifier, hidden: Boolea
                     if (!released) cancel()
                 }
             }
-        }, done = false, flash = flash)
+        }, done = false, containerColor = DayPlanTileColor, flash = flash)
 }

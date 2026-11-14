@@ -34,7 +34,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -85,7 +84,7 @@ internal fun MondayIntroPlayer(modifier: Modifier = Modifier, onFinished: (compl
     val skipInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout).union(WindowInsets.navigationBars)
     Box(modifier.fillMaxSize()
         .testTag("monday_intro")
-        .background(if (firstFrame) Night else Color.Transparent)
+        .background(Night)
         .pointerInput(Unit) { detectTapGestures { } }) {
         AndroidView(
             factory = { context ->

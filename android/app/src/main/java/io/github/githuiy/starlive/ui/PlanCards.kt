@@ -97,9 +97,10 @@ internal fun rememberPlanReveal(reduceMotion: Boolean, vararg keys: Any?): PlanR
 
 @Composable
 internal fun PlanTile(title: String, category: String, modifier: Modifier = Modifier,
-    done: Boolean? = null, flash: () -> Float = { 0f }) {
+    done: Boolean? = null, containerColor: Color = if (done == true) Panel else PanelSoft,
+    flash: () -> Float = { 0f }) {
     val tint = categoryColor(category)
-    Surface(color = if (done == true) Panel else PanelSoft,
+    Surface(color = containerColor,
         shape = RoundedCornerShape(15.dp),
         border = BorderStroke(1.dp, if (done == true) Gold.copy(alpha = .32f) else Line),
         modifier = modifier) {

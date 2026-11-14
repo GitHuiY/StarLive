@@ -84,7 +84,7 @@ internal fun MonitorPanel(
             (it > 0 || state.dataQuality == MonitorDataQuality.COMPLETE)
     }
 
-    SkyCard {
+    SkyCard(containerColor = Night.copy(alpha = .68f)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
@@ -97,14 +97,14 @@ internal fun MonitorPanel(
                 modifier = Modifier.testTag("monitor_enabled").semantics { contentDescription = "监测开关" })
         }
         if (state.initialized && !state.usageAccess) {
-            Text("开启监测前，请在系统设置中允许 StarLive 访问应用使用情况。", color = Muted)
+            Text("开启监测前，请在系统设置中允许 StarLive 访问应用使用情况。", color = Ink)
             OutlinedButton(onClick = onUsageAccess, modifier = Modifier.testTag("monitor_usage_access")) {
                 Text("打开使用情况访问设置")
             }
         }
         if (state.initialized && !state.notificationsAllowed) {
             Text("监测状态和使用提醒各用一个通知渠道。开启监测前，请允许通知并启用两个渠道。",
-                color = Muted)
+                color = Ink)
             OutlinedButton(onClick = onNotificationPermission,
                 modifier = Modifier.testTag("monitor_notification_permission")) { Text("允许通知") }
             TextButton(onClick = onNotificationSettings) { Text("检查通知设置") }
@@ -118,7 +118,7 @@ internal fun MonitorPanel(
                 Text("恢复监测")
             }
         }
-        Text(if (total == null) "—" else durationLabel(total), color = if (total == null) Muted else Ink,
+        Text(if (total == null) "—" else durationLabel(total), color = Ink,
             style = MaterialTheme.typography.headlineLarge)
         Text(when {
             total == null -> "当前没有可用的使用记录"
@@ -127,17 +127,17 @@ internal fun MonitorPanel(
             else -> "所选应用今日合计"
         }, style = MaterialTheme.typography.bodyLarge)
         if (state.enabledIntent && state.usageAccess) {
-            state.sessionMillis?.let { Text("本次连续使用 ${durationLabel(it)}", color = Muted) }
+            state.sessionMillis?.let { Text("本次连续使用 ${durationLabel(it)}", color = Ink) }
             state.lastUpdateWallMillis?.let {
                 val time = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
                     .format(Instant.ofEpochMilli(it))
-                Text("上次更新 ${time}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("上次更新 ${time}", color = Ink, style = MaterialTheme.typography.bodySmall)
             }
         }
         Text("按系统可确认的前台使用区间统计。所选应用同时可见的时间在合计中只算一次。",
-            color = Muted, style = MaterialTheme.typography.bodySmall)
+            color = Ink, style = MaterialTheme.typography.bodySmall)
     }
-    if (total != null && state.selectedPackages.isNotEmpty()) SkyCard {
+    if (total != null && state.selectedPackages.isNotEmpty()) SkyCard(containerColor = Night.copy(alpha = .82f)) {
         Text("所选应用", style = MaterialTheme.typography.titleLarge)
         for (id in state.selectedPackages.sortedBy { names[it] ?: it }) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

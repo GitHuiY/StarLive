@@ -54,7 +54,7 @@ fun IdeasScreen(today: LocalDate, monday: LocalDate, offset: Int, onOffset: (Int
     val reveal = rememberPlanReveal(reduceMotion, category)
     val ideas = LifeIdeas.filter { category == "全部" || it.category == category }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        SkyCard {
+        SkyCard(containerColor = Night.copy(alpha = .68f)) {
             Text("加入草稿的日期", style = MaterialTheme.typography.bodyMedium)
             WeekPicker(offset, onOffset)
             Text(weekRange(monday), color = Gold, style = MaterialTheme.typography.bodySmall)
@@ -62,6 +62,8 @@ fun IdeasScreen(today: LocalDate, monday: LocalDate, offset: Int, onOffset: (Int
             TextButton(onClick = onPlanner) { Text("查看周计划草稿 ↗") }
         }
         CategoryPicker(category, { category = it }, includeAll = true)
+        Button(onClick = { custom = IdeaTarget(monday.toString(), day) }, modifier = Modifier.fillMaxWidth()
+            .sizeIn(minHeight = 54.dp).testTag("idea_custom")) { Text("＋ 写下自己的小计划") }
         // The host page already scrolls vertically. These rows keep both columns in that scroll.
         ideas.withIndex().chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
@@ -73,13 +75,11 @@ fun IdeasScreen(today: LocalDate, monday: LocalDate, offset: Int, onOffset: (Int
                             if (reveal.requestOpen(cardId)) {
                                 detail = IdeaDetail(index, idea, IdeaTarget(monday.toString(), day))
                             }
-                        }, flash = { reveal.progress(cardId) })
+                        }, containerColor = Night.copy(alpha = .82f), flash = { reveal.progress(cardId) })
                 }
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        Button(onClick = { custom = IdeaTarget(monday.toString(), day) }, modifier = Modifier.fillMaxWidth()
-            .sizeIn(minHeight = 54.dp).testTag("idea_custom")) { Text("＋ 写下自己的小计划") }
     }
     detail?.takeIf { reveal.openId == it.index.toString() }?.let { selected ->
         val (week, targetDay) = selected.target

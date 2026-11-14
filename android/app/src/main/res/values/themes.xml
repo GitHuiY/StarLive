@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.StarLive" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.StarLive.Base" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#0B1424</item>
@@ -7,4 +7,5 @@
         <item name="android:navigationBarColor">#0B1424</item>
         <item name="android:colorAccent">#DFC38D</item>
     </style>
+    <style name="Theme.StarLive" parent="Theme.StarLive.Base" />
 </resources>
