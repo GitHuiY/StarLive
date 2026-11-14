@@ -78,7 +78,9 @@ fun WeekStarMap(
     modifier: Modifier = Modifier,
     companions: List<PlanItem> = emptyList(), focusedCompanionId: String? = null,
     onCompanion: (PlanItem) -> Unit = {}, onPrimaryBounds: (Rect?) -> Unit = {},
-    highlightPrimary: Boolean = false, interactive: Boolean = true
+    highlightPrimary: Boolean = false, interactive: Boolean = true,
+    backgroundTag: String = "sky_background", primaryTag: String = "primary_star",
+    primaryDescription: String? = null
 ) {
     val layoutDensity = LocalDensity.current
     val updatePrimaryBounds by rememberUpdatedState(onPrimaryBounds)
@@ -217,7 +219,7 @@ fun WeekStarMap(
                 drawCircle(Starlight.copy(alpha = .76f * brightness), .85.dp.toPx(), center)
             }
         }
-        if (interactive && !overview) Box(Modifier.matchParentSize().testTag("sky_background")
+        if (interactive && !overview) Box(Modifier.matchParentSize().testTag(backgroundTag)
             .semantics { contentDescription = if (focusedIndex >= 0) "回到主星" else "回到整片星空" }
             .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onOverview))
         for (index in 0..6) {
@@ -231,8 +233,9 @@ fun WeekStarMap(
                 Box(Modifier.offset { IntOffset(
                     (center.x - 24.dp.toPx()).roundToInt(),
                     (center.y - 24.dp.toPx()).roundToInt())
-                }.size(48.dp).then(dropBounds).testTag(if (overview) "star_$index" else "primary_star").semantics {
-                    contentDescription = "${ShortWeekdays[index]} · ${StarNames[index]}${if (index == todayIndex) "，今天" else ""}，完成${(ratios.getOrElse(index) { 0f } * 100).roundToInt()}%"
+                }.size(48.dp).then(dropBounds).testTag(if (overview) "star_$index" else primaryTag).semantics {
+                    contentDescription = primaryDescription ?:
+                        "${ShortWeekdays[index]} · ${StarNames[index]}${if (index == todayIndex) "，今天" else ""}，完成${(ratios.getOrElse(index) { 0f } * 100).roundToInt()}%"
                 }.clickable(role = Role.Button) { onDay(index) })
             }
         }

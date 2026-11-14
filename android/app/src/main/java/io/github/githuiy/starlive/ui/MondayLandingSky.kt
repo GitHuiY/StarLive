@@ -50,13 +50,22 @@ private val LandingWarmCore = Color(0xFFFFF3D8)
 private val LandingCoolCore = Color(0xFFE5F3FB)
 private val StarNameTypeface = Typeface.create("serif", Typeface.NORMAL)
 
+internal fun landingSkyBottom(width: Float, height: Float, touchRadius: Float): Float {
+    val scale = minOf(width / LandingWidth, height / LandingHeight)
+    return (height - LandingHeight * scale) / 2 + LandingStars.last().y * scale +
+        maxOf(100f * scale, touchRadius)
+}
+
 @Composable
 internal fun MondayLandingSky(
     ratios: List<Float>, todayIndex: Int, onDay: (Int) -> Unit, modifier: Modifier = Modifier,
     overview: Boolean = true, selectedDay: Int = 0, focusBounds: Rect? = null,
     focusProgress: Float = 0f, reduceMotion: Boolean = false,
     weekdayAnchor: Offset? = null, starNameAnchor: Offset? = null,
-    showLabels: Boolean = true, interactive: Boolean = true
+    showLabels: Boolean = true, interactive: Boolean = true,
+    overviewTag: String = "overview", starTag: String = "star_",
+    dateDescription: ((Int) -> String)? = null,
+    showFocusedWeekday: Boolean = true
 ) {
     val density = LocalDensity.current
     val focusedNameSize = with(density) { MaterialTheme.typography.headlineMedium.fontSize.toPx() }
@@ -64,7 +73,7 @@ internal fun MondayLandingSky(
         animateFloatAsState(ratios.getOrElse(index) { 0f }.coerceIn(0f, 1f),
             tween(if (reduceMotion) 0 else 700), label = "landing-star-light-$index").value
     }
-    BoxWithConstraints(modifier.fillMaxSize().then(if (overview && interactive) Modifier.testTag("overview") else Modifier)) {
+    BoxWithConstraints(modifier.fillMaxSize().then(if (overview && interactive) Modifier.testTag(overviewTag) else Modifier)) {
         val width = constraints.maxWidth.toFloat()
         val height = constraints.maxHeight.toFloat()
         val scale = minOf(width / LandingWidth, height / LandingHeight)
@@ -94,6 +103,7 @@ internal fun MondayLandingSky(
         val zoomedScale = scale * (1f + .52f * focusProgress)
         val secondaryOpacity = (1f - focusProgress) * (1f - focusProgress)
         fun starOpacity(index: Int) = skyOpacity * if (index == selectedDay) 1f else secondaryOpacity
+        val anchoredLabel = starNameAnchor != null && (!showFocusedWeekday || weekdayAnchor != null)
         if (skyOpacity > 0f) Canvas(Modifier.matchParentSize()) {
             points.forEachIndexed { index, center ->
                 drawLandingHalo(center, zoomedScale, starCompletionLight(lights[index]),
@@ -121,14 +131,14 @@ internal fun MondayLandingSky(
             }
             if (showLabels) {
                 drawLandingLabels(points, scale, todayIndex, secondaryOpacity,
-                    except = if (focusProgress > 0f && weekdayAnchor != null && starNameAnchor != null) selectedDay else -1)
+                    except = if (focusProgress > 0f && anchoredLabel) selectedDay else -1)
             }
         }
-        if (showLabels && focusProgress > 0f && weekdayAnchor != null && starNameAnchor != null) {
+        if (showLabels && focusProgress > 0f && anchoredLabel) {
             Canvas(Modifier.matchParentSize()) {
                 drawStarLabel(selectedDay, origin + LandingStars[selectedDay] * scale, scale, todayIndex,
                     progress = easedTravel, weekdayAnchor = weekdayAnchor, nameAnchor = starNameAnchor,
-                    nameSize = focusedNameSize)
+                    nameSize = focusedNameSize, fadeWeekday = !showFocusedWeekday)
             }
         }
 
@@ -141,17 +151,18 @@ internal fun MondayLandingSky(
                     IntOffset((center.x - half).roundToInt(), (center.y - half).roundToInt())
                 }
                 .size(touchSize)
-                .testTag("star_$index")
+                .testTag("$starTag$index")
                 .semantics {
                     val today = if (index == todayIndex) "，今天" else ""
-                    contentDescription = "${ShortWeekdays[index]} · ${StarNames[index]}$today，完成${(lights[index] * 100).roundToInt()}%"
+                    contentDescription = dateDescription?.invoke(index) ?:
+                        "${ShortWeekdays[index]} · ${StarNames[index]}$today，完成${(lights[index] * 100).roundToInt()}%"
                 }
                 .clickable(interactionSource = null, indication = null, role = Role.Button) { onDay(index) })
         }
     }
 }
 
-private fun DrawScope.drawLandingHalo(center: Offset, scale: Float, light: Float, warm: Boolean, opacity: Float) {
+internal fun DrawScope.drawLandingHalo(center: Offset, scale: Float, light: Float, warm: Boolean, opacity: Float) {
     val radius = (if (warm) 113f else 88f) * (1f + .28f * light) * scale
     val brush = if (warm) Brush.radialGradient(
         0f to Color(0xFFEFCB9B).copy(alpha = .39f + .20f * light),
@@ -169,7 +180,7 @@ private fun DrawScope.drawLandingHalo(center: Offset, scale: Float, light: Float
     drawCircle(brush, radius, center, alpha = opacity)
 }
 
-private fun DrawScope.drawLandingStar(center: Offset, scale: Float, light: Float, warm: Boolean, opacity: Float) {
+internal fun DrawScope.drawLandingStar(center: Offset, scale: Float, light: Float, warm: Boolean, opacity: Float) {
     val point = if (warm) LandingWarmPoint else LandingCoolPoint
     val arm = (if (warm) 29f else 22f) * (1f + .25f * light) * scale
     val control = 2f * scale
@@ -223,7 +234,7 @@ private fun DrawScope.drawLandingLabels(points: List<Offset>, scale: Float, toda
 
 private fun DrawScope.drawStarLabel(index: Int, center: Offset, scale: Float, todayIndex: Int,
     opacity: Float = 1f, progress: Float = 0f, weekdayAnchor: Offset? = null,
-    nameAnchor: Offset? = null, nameSize: Float = 11.sp.toPx()) {
+    nameAnchor: Offset? = null, nameSize: Float = 11.sp.toPx(), fadeWeekday: Boolean = false) {
     val dayPaint = landingLabelPaint()
     val namePaint = Paint(dayPaint).apply { typeface = StarNameTypeface }
     val day = ShortWeekdays[index]
@@ -247,7 +258,8 @@ private fun DrawScope.drawStarLabel(index: Int, center: Offset, scale: Float, to
         canvas.drawText("·", x + (dayWidth - nameWidth) / 2f, baseline, dayPaint)
     }
     val dayPosition = lerp(weekdayStart, weekdayAnchor ?: weekdayStart, progress)
-    dayPaint.color = lerpColor(startColor, Gold, progress).copy(alpha = opacity).toArgb()
+    val weekdayOpacity = if (fadeWeekday) opacity * (1f - progress) else opacity
+    dayPaint.color = lerpColor(startColor, Gold, progress).copy(alpha = weekdayOpacity).toArgb()
     canvas.drawText(day, dayPosition.x, dayPosition.y, dayPaint)
     val namePosition = lerp(nameStart, nameAnchor ?: nameStart, progress)
     namePaint.textSize += (nameSize - namePaint.textSize) * progress

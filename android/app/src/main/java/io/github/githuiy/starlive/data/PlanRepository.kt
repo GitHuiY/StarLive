@@ -96,6 +96,10 @@ class PlanRepository internal constructor(context: Context, private val storage:
         engine().addDraftItem(it, week, day, title, category, body)
     }
 
+    fun addSparksDraftItem(week: String, day: Int, title: String, category: String, body: String) = mutate {
+        engine().addSparksDraftItem(it, week, day, title, category, body)
+    }
+
     fun updateDraftItem(week: String, day: Int, id: String, title: String, category: String) = mutate {
         engine().updateDraftItem(it, week, day, id, title, category)
     }

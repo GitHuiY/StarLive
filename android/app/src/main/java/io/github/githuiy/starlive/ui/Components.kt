@@ -48,6 +48,8 @@ import java.time.format.DateTimeFormatter
 import io.github.githuiy.starlive.core.BackupCodec
 
 val Categories = listOf("家务", "运动", "学习", "阅读", "社交", "探索", "休息", "交流思考", "喜欢")
+internal fun categoryLabel(category: String): String = if (category == "交流思考") "思考" else category
+
 fun categoryColor(category: String): Color = when (category) {
     "家务" -> Color(0xFFBBA987)
     "运动" -> Color(0xFF9FB5A4)
@@ -121,14 +123,15 @@ fun DayPicker(monday: LocalDate, selected: Int, today: LocalDate,
 }
 
 @Composable
-fun CategoryPicker(selected: String, onSelected: (String) -> Unit, includeAll: Boolean = false) {
+fun CategoryPicker(selected: String?, onSelected: (String) -> Unit,
+    modifier: Modifier = Modifier, includeAll: Boolean = false) {
     val choices = if (includeAll) listOf("全部") + Categories
-        else if (selected !in Categories) listOf(selected.take(BackupCodec.MAX_CATEGORY_LENGTH)) + Categories
+        else if (selected != null && selected !in Categories) listOf(selected.take(BackupCodec.MAX_CATEGORY_LENGTH)) + Categories
         else Categories
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        choices.forEach { category ->
-            FilterChip(selected == category, onClick = { onSelected(category) }, label = { Text(category) },
+        choices.distinctBy(::categoryLabel).forEach { category ->
+            FilterChip(selected == category, onClick = { onSelected(category) }, label = { Text(categoryLabel(category)) },
                 modifier = Modifier.sizeIn(minHeight = 48.dp))
         }
     }
@@ -147,8 +150,9 @@ fun CategoryMark(category: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun TaskEditorDialog(initialTitle: String, initialCategory: String, editing: Boolean,
-    onDismiss: () -> Unit, initialBody: String = "", onSave: (String, String, String) -> Unit) {
+fun TaskEditorDialog(initialTitle: String, initialCategory: String?, editing: Boolean,
+    onDismiss: () -> Unit, initialBody: String = "", fixedCategory: Boolean = false,
+    dateLabel: String? = null, onSave: (String, String, String) -> Unit) {
     var title by remember { mutableStateOf(initialTitle) }
     var category by remember { mutableStateOf(initialCategory) }
     var body by remember { mutableStateOf(initialBody) }
@@ -156,19 +160,26 @@ fun TaskEditorDialog(initialTitle: String, initialCategory: String, editing: Boo
         title = { Text(if (editing) "调整这份期待" else "留一件想做的小事") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (dateLabel != null) Text(dateLabel, color = Gold)
                 OutlinedTextField(value = title, onValueChange = { if (it.length <= BackupCodec.MAX_TITLE_LENGTH) title = it },
                     label = { Text("想做什么") }, minLines = 2,
                     supportingText = { Text("${title.length}/${BackupCodec.MAX_TITLE_LENGTH} · 保存在草稿中") })
                 OutlinedTextField(value = body, onValueChange = { if (it.length <= BackupCodec.MAX_BODY_LENGTH) body = it },
                     label = { Text("正文（可选）") }, minLines = 3, maxLines = 6,
                     modifier = Modifier.fillMaxWidth().testTag("plan_body"))
-                Text("选择类别", color = Muted)
-                CategoryPicker(category, { category = it })
+                if (fixedCategory && initialCategory != null) {
+                    Text("类别 · ${categoryLabel(initialCategory)}", color = categoryColor(initialCategory),
+                        modifier = Modifier.testTag("plan_category_fixed"))
+                } else {
+                    Text("选择类别", color = Muted)
+                    CategoryPicker(category, { category = it }, modifier = Modifier.testTag("plan_category_picker"))
+                }
                 if (editing) Text("改名会重置该事项的完成状态。编辑正文、调整类别和排序会保留完成状态。",
                     style = MaterialTheme.typography.bodySmall, color = Muted)
             }
         },
-        confirmButton = { Button(onClick = { onSave(title.trim(), category, body) }, enabled = title.isNotBlank()) {
+        confirmButton = { Button(onClick = { category?.let { onSave(title.trim(), it, body) } },
+            enabled = title.isNotBlank() && category != null) {
             Text("保存到草稿")
         } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })

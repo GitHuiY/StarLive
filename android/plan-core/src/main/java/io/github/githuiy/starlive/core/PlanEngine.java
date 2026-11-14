@@ -1,8 +1,7 @@
 package io.github.githuiy.starlive.core;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,16 +10,18 @@ import java.util.UUID;
 
 /** Pure, immutable plan operations. Construct with today's system-zone date. */
 public final class PlanEngine {
+    private final LocalDate today;
     private final String thisWeek;
     private final String nextWeek;
 
     public PlanEngine(LocalDate today) {
+        this.today = today;
         thisWeek = weekKey(today);
         nextWeek = weekKey(today.plusWeeks(1));
     }
 
     public static String weekKey(LocalDate date) {
-        return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString();
+        return PlanningHorizon.firstMonday(date).toString();
     }
 
     public static WeekPlan confirmed(AppState state, String week) {
@@ -41,6 +42,28 @@ public final class PlanEngine {
     public AppState addDraftItem(AppState state, String week, int day,
             String title, String category, String body) {
         editable(week, day);
+        return appendDraftItem(state, week, day, title, category, body);
+    }
+
+    public AppState addSparksDraftItem(AppState state, String week, int day,
+            String title, String category, String body) {
+        checkDay(day);
+        if (week == null) throw new IllegalArgumentException("周计划日期无效");
+        LocalDate monday;
+        try {
+            monday = LocalDate.parse(week);
+        } catch (DateTimeParseException failure) {
+            throw new IllegalArgumentException("周计划日期无效", failure);
+        }
+        if (!week.equals(weekKey(monday))) throw new IllegalArgumentException("周计划日期无效");
+        if (!PlanningHorizon.includes(today, monday)) {
+            throw new IllegalArgumentException("请选择本周起至未来三个月内的完整周");
+        }
+        return appendDraftItem(state, week, day, title, category, body);
+    }
+
+    private AppState appendDraftItem(AppState state, String week, int day,
+            String title, String category, String body) {
         checkText(title, category, body);
         List<List<PlanItem>> days = draft(state, week).mutableDays();
         String trimmed = title.trim();

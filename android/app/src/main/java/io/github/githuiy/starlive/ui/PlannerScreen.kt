@@ -75,7 +75,7 @@ fun PlannerScreen(
                         Text(item.title.ifBlank { "尚未填写的事项" },
                             color = if (item.done) Ink else Muted,
                             style = MaterialTheme.typography.bodyLarge)
-                        Text(item.category + if (item.done) " · 已完成" else " · 未完成",
+                        Text(categoryLabel(item.category) + if (item.done) " · 已完成" else " · 未完成",
                             color = if (item.done) categoryColor(item.category) else Muted.copy(alpha = .75f),
                             style = MaterialTheme.typography.bodySmall)
                     }

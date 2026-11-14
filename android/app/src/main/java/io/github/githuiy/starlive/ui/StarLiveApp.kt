@@ -52,15 +52,18 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -73,6 +76,8 @@ import io.github.githuiy.starlive.BuildConfig
 import io.github.githuiy.starlive.R
 import io.github.githuiy.starlive.core.AppState
 import io.github.githuiy.starlive.core.PlanEngine
+import io.github.githuiy.starlive.core.PlanningHorizon
+import io.github.githuiy.starlive.core.WeekPlan
 import io.github.githuiy.starlive.data.BackupPreview
 import io.github.githuiy.starlive.data.PlanRepository
 import java.time.DayOfWeek
@@ -95,6 +100,8 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     var energyExpanded by rememberSaveable { mutableStateOf(false) }
     var coldEnergyOpened by rememberSaveable { mutableStateOf(false) }
     var selectedDay by rememberSaveable { mutableStateOf(today.dayOfWeek.value - 1) }
+    var sparksDay by rememberSaveable { mutableStateOf<Int?>(null) }
+    var sparksWeekKey by rememberSaveable { mutableStateOf<String?>(null) }
     var overview by rememberSaveable { mutableStateOf(true) }
     var followToday by rememberSaveable { mutableStateOf(true) }
     var autoFocusToday by rememberSaveable { mutableStateOf(true) }
@@ -110,6 +117,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     var focusBounds by remember { mutableStateOf<Rect?>(null) }
     var weekdayAnchor by remember { mutableStateOf<Offset?>(null) }
     var starNameAnchor by remember { mutableStateOf<Offset?>(null) }
+    var skyWindowSize by remember { mutableStateOf(Size.Zero) }
     val focusProgress by animateFloatAsState(
         targetValue = if (overview) 0f else 1f,
         animationSpec = tween(if (reduceMotion) 0 else if (overview) 1100 else 800, easing = FastOutSlowInEasing),
@@ -119,6 +127,9 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     val monday = archivedWeek?.let(LocalDate::parse) ?: currentMonday.plusWeeks(offset.toLong())
     val historicalWeek = monday.isBefore(currentMonday)
     val weekKey = monday.toString()
+    val requestedSparksMonday = sparksWeekKey?.let(LocalDate::parse)
+    val sparksMonday = requestedSparksMonday?.coerceIn(currentMonday, PlanningHorizon.lastMonday(today)) ?: monday
+    val displayedSparksDay = sparksDay?.takeIf { PlanningHorizon.includes(today, sparksMonday.plusDays(it.toLong())) }
 
     fun navigate(target: String) {
         introDecisionMade = true
@@ -127,6 +138,10 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         settlingIntro = false
         if (target != "stars") energyExpanded = false
         if (target == "planner" || target == "ideas") archivedWeek = null
+        if (target == "ideas" && page != "ideas" && sparksWeekKey == null) {
+            sparksWeekKey = currentMonday.plusWeeks(offset.toLong()).toString()
+        }
+        if (target != page) sparksDay = null
         page = target
     }
     fun chooseDay(day: Int) {
@@ -194,6 +209,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         if (pendingDebugIntro && dataReady && resumed) {
             introDecisionMade = true
             autoFocusToday = false
+            sparksDay = null
             page = "stars"
             offset = 0
             archivedWeek = null
@@ -212,6 +228,11 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     }
     LaunchedEffect(today, timezone) {
         if (followToday && monday == currentMonday) selectedDay = today.dayOfWeek.value - 1
+        if (requestedSparksMonday != null && requestedSparksMonday != sparksMonday) {
+            sparksWeekKey = sparksMonday.toString()
+            sparksDay = null
+        }
+        if (displayedSparksDay == null) sparksDay = null
     }
     LaunchedEffect(page) { scroll.scrollTo(0) }
     LaunchedEffect(lifecycleOwner) {
@@ -225,9 +246,13 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     BackHandler(enabled = page != "stars" || !overview || historicalWeek) {
         introDecisionMade = true
         autoFocusToday = false
-        if (page != "stars") page = "stars"
-        else if (overview && historicalWeek) openEnergyWeek(currentMonday)
-        overview = true
+        if (page == "ideas" && sparksDay != null) {
+            sparksDay = null
+        } else {
+            if (page != "stars") page = "stars"
+            else if (overview && historicalWeek) openEnergyWeek(currentMonday)
+            overview = true
+        }
     }
     if (playingIntro || ((pendingStartupIntro || pendingDebugIntro) && (loading || data != null))) {
         val introFrame = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }
@@ -241,8 +266,10 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         }
         return
     }
-    StarBackdrop(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+    StarBackdrop(Modifier.fillMaxSize().onSizeChanged { skyWindowSize = Size(it.width.toFloat(), it.height.toFloat()) }
+        .semantics { testTagsAsResourceId = true }) {
         val homeSky = page == "stars" && data != null
+        val sparksSky = page == "ideas" && data != null
         val contentOverSky = page == "ideas" || page == "space"
         // Keep the fitted illustration mounted across tab changes, including the planner.
         Image(painterResource(R.drawable.monday_sky_plate), contentDescription = null,
@@ -252,16 +279,15 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         }
         val displayedWeek = data?.let { PlanEngine.confirmed(it, weekKey) }
         val ratios = remember(displayedWeek) {
-            displayedWeek?.days?.map { day -> if (day.isEmpty()) 0f else day.count { it.done }.toFloat() / day.size }
-                ?: List(7) { 0f }
+            weekCompletionRatios(displayedWeek ?: WeekPlan.empty())
         }
         val todayIndex = if (monday == currentMonday) today.dayOfWeek.value - 1 else -1
-        if (contentOverSky) {
+        if (page == "space") {
             MondayLandingSky(ratios, todayIndex, {}, Modifier.fillMaxSize(),
                 reduceMotion = reduceMotion, showLabels = false, interactive = false)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 listOf(Night.copy(alpha = .13f), Night.copy(alpha = .24f)))))
-        } else if (!homeSky) {
+        } else if (!homeSky && !sparksSky) {
             Box(Modifier.fillMaxSize().background(Night))
         }
         Scaffold(containerColor = Color.Transparent, contentColor = Ink,
@@ -309,7 +335,24 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                     }
                 }
             }, snackbarHost = { SnackbarHost(snackbar) }) { inner ->
-            Column(Modifier.fillMaxSize().padding(inner).imePadding().verticalScroll(scroll)
+            val content = Modifier.fillMaxSize().padding(inner).imePadding()
+            val daySkyHeight = with(LocalDensity.current) {
+                val bodyHeight = skyWindowSize.height.toDp() - inner.calculateTopPadding() -
+                    inner.calculateBottomPadding() - 24.dp
+                homeDaySkyHeight(skyWindowSize.width.toDp(), bodyHeight)
+            }
+            if (page == "ideas" && data != null) {
+                IdeasScreen(today, sparksMonday, onWeekSelected = { week ->
+                    sparksWeekKey = week.toString()
+                    sparksDay = null
+                }, day = displayedSparksDay, onDay = { day ->
+                    sparksDay = day
+                    if (sparksMonday == monday) chooseEditorDay(day)
+                }, draft = PlanEngine.draft(data, sparksMonday.toString()), onAdd = repository::addSparksDraftItem,
+                    reduceMotion = reduceMotion,
+                    onOverview = { sparksDay = null }, notice = error,
+                    contentPadding = inner, confirmedWeek = { PlanEngine.confirmed(data, it.toString()) })
+            } else Column(content.verticalScroll(scroll)
                 .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (error != null) SmallNotice(error)
                 when {
@@ -332,10 +375,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         }, pageScroll = scroll, externalOverview = true, focusProgress = focusProgress,
                         canCompletePlans = !historicalWeek,
                         onSkyBounds = { focusBounds = it }, onWeekdayAnchor = { weekdayAnchor = it },
-                        onStarNameAnchor = { starNameAnchor = it })
-                    page == "ideas" -> IdeasScreen(today, monday, offset, ::chooseWeek,
-                        selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), repository::addDraftItem,
-                        onPlanner = { navigate("planner") }, reduceMotion = reduceMotion)
+                        onStarNameAnchor = { starNameAnchor = it }, daySkyHeight = daySkyHeight)
                     page == "planner" -> PlannerScreen(today, monday, offset, ::chooseWeek,
                         selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), data.weeks.containsKey(weekKey),
                         onIdeas = { navigate("ideas") }, onAdd = repository::addDraftItem,

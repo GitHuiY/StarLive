@@ -9,6 +9,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertValueEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
@@ -173,6 +175,15 @@ class StarLiveUiTest {
         compose.onNodeWithTag(tag, useUnmergedTree = true).performScrollTo().performClick()
     }
 
+    private fun sparksDateClick(tag: String) {
+        compose.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed().performClick()
+    }
+
+    private fun chooseSparksWeek(monday: String) {
+        sparksDateClick("sparks_week_picker")
+        contentClick("sparks_week_$monday")
+    }
+
     private fun goOverview() {
         compose.onNodeWithTag("nav_stars").performClick()
         compose.waitForIdle()
@@ -182,6 +193,11 @@ class StarLiveUiTest {
 
     private fun tapBlankSky() {
         compose.onNodeWithTag("sky_background", useUnmergedTree = true).performScrollTo()
+            .performTouchInput { click(Offset(width * 0.08f, height * 0.1f)) }
+    }
+
+    private fun tapBlankSparksSky() {
+        compose.onNodeWithTag("sparks_sky_background", useUnmergedTree = true).assertIsDisplayed()
             .performTouchInput { click(Offset(width * 0.08f, height * 0.1f)) }
     }
 
@@ -383,13 +399,23 @@ class StarLiveUiTest {
     @Test fun ideasOpenInDetailAndAddTheirBodyOnlyToDraft() {
         val title = "给房间一个小小整理"
         val body = "从桌面开始。\n把不用的东西放回原处。"
+        val targetWeek = PlanEngine.weekKey(LocalDate.now().plusWeeks(4))
+        val targetDay = 2
         compose.onNodeWithTag("nav_ideas").performClick()
+        compose.onNodeWithTag("idea_card_0", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("idea_open_draft", useUnmergedTree = true).assertDoesNotExist()
+        chooseSparksWeek(targetWeek)
+        sparksDateClick("sparks_star_$targetDay")
+        compose.onNodeWithTag("sparks_selected_date", useUnmergedTree = true).assertIsDisplayed()
         val first = compose.onNodeWithTag("idea_card_0", useUnmergedTree = true)
         val second = compose.onNodeWithTag("idea_card_1", useUnmergedTree = true)
-        val firstBounds = first.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val firstBounds = first.performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val secondBounds = second.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        assertEquals(firstBounds.top, secondBounds.top, 1f)
-        assertTrue(firstBounds.right <= secondBounds.left)
+        assertEquals(firstBounds.left, secondBounds.left, 1f)
+        assertTrue(firstBounds.bottom <= secondBounds.top)
+        compose.onNodeWithTag("idea_category_家务", useUnmergedTree = true).assertExists()
+        compose.onNode((hasText("家\n务") or hasText("家务")) and hasAnyAncestor(hasTestTag("idea_card_0")),
+            useUnmergedTree = true).assertDoesNotExist()
         screenshot("08-ideas.png")
 
         val detail = compose.onNodeWithTag("idea_detail", useUnmergedTree = true)
@@ -406,12 +432,89 @@ class StarLiveUiTest {
             scenario.onActivity { activity ->
                 val data = ViewModelProvider(activity)[PlanViewModel::class.java].data!!
                 assertTrue("Adding an idea confirmed the plan", data.weeks.isEmpty())
-                added = data.drafts.values.any { week -> week.days.flatten().any {
+                added = data.drafts[targetWeek]?.days?.get(targetDay)?.any {
                     it.title == title && it.body == body
-                } }
+                } == true
             }
             added
         }
+    }
+
+    // The custom plan editor contains text fields, so use the same Robolectric width workaround.
+    @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
+    @Test fun sparksReturnsToTheChosenWeekAndUsesTheSelectedCategoryForCustomPlans() {
+        val title = "留给下周日的小计划"
+        val category = "运动"
+        val today = LocalDate.now()
+        val day = 6
+        val nextWeek = PlanEngine.weekKey(today.plusWeeks(1))
+
+        compose.onNodeWithTag("nav_ideas").performClick()
+        sparksDateClick("sparks_star_$day")
+        compose.onNodeWithTag("sparks_show_overview", useUnmergedTree = true).assertDoesNotExist()
+        tapBlankSparksSky()
+        chooseSparksWeek(nextWeek)
+        compose.onNodeWithTag("idea_custom", useUnmergedTree = true).assertDoesNotExist()
+        sparksDateClick("sparks_star_$day")
+        val categoryNode = compose.onNodeWithTag("idea_category_$category", useUnmergedTree = true)
+        categoryNode.performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithText("散步，看看路边的树").assertIsDisplayed()
+        compose.onNodeWithText("给房间一个小小整理").assertDoesNotExist()
+        sparksDateClick("idea_custom")
+        compose.onNodeWithTag("plan_category_fixed").assertIsDisplayed().assertTextContains(category, substring = true)
+        compose.onNodeWithTag("plan_category_picker", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(title)) }
+        compose.onNodeWithText("保存到草稿").performClick()
+        awaitRepository("The custom plan did not land in next Sunday's draft") {
+            var added = false
+            scenario.onActivity { activity ->
+                val data = checkNotNull(ViewModelProvider(activity)[PlanViewModel::class.java].data)
+                added = data.drafts[nextWeek]?.days?.get(day)?.any {
+                    it.title == title && it.category == category
+                } == true
+            }
+            added
+        }
+
+        scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("sparks_star_$day", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("idea_custom", useUnmergedTree = true).assertDoesNotExist()
+
+        sparksDateClick("sparks_star_0")
+        tapBlankSparksSky()
+        compose.onNodeWithTag("sparks_star_0", useUnmergedTree = true).assertIsDisplayed()
+
+        sparksDateClick("sparks_star_0")
+        compose.onNodeWithTag("nav_space").performClick()
+        compose.onNodeWithTag("nav_ideas").performClick()
+        compose.onNodeWithTag("sparks_star_0", useUnmergedTree = true).assertIsDisplayed()
+        sparksDateClick("sparks_week_picker")
+        compose.onNodeWithTag("sparks_week_$nextWeek", useUnmergedTree = true)
+            .performScrollTo().assertIsDisplayed().assertIsSelected()
+        compose.onNodeWithTag("idea_custom", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test fun sparksMatchesStarmapStarPositionsInBothViews() {
+        fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true)
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+
+        goOverview()
+        val homeStars = (0..6).map { bounds("star_$it").center }
+        tapMondayStar()
+        val homePrimary = bounds("primary_star").center
+        val homeFocusedSky = bounds("sky_background")
+        compose.onNodeWithTag("nav_ideas").performClick()
+        val sparksStars = (0..6).map { bounds("sparks_star_$it").center }
+        homeStars.zip(sparksStars).forEachIndexed { day, (home, sparks) ->
+            assertEquals("Star $day x", home.x, sparks.x, 1f)
+            assertEquals("Star $day y", home.y, sparks.y, 1f)
+        }
+        sparksDateClick("sparks_star_0")
+        val sparksPrimary = bounds("sparks_selected_date").center
+        assertEquals(homePrimary.x, sparksPrimary.x, 1f)
+        assertEquals(homePrimary.y, sparksPrimary.y, 1f)
+        assertEquals(homeFocusedSky, bounds("sparks_sky_background"))
     }
 
     // Robolectric #8460: >320dp Dialog + TextField can loop in layout. Keep the

@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.githuiy.starlive.core.PlanItem
 import io.github.githuiy.starlive.core.WeekPlan
@@ -71,12 +72,70 @@ import kotlinx.coroutines.delay
 private const val CompletionHoldMillis = 1_500L
 private val DayPlanTileColor = Night.copy(alpha = .64f)
 
+internal fun homeDaySkyHeight(width: Dp, bodyHeight: Dp): Dp =
+    if (width >= 440.dp && bodyHeight < 260.dp) (bodyHeight * .43f).coerceIn(60.dp, 112.dp) else 212.dp
+
+internal fun weekCompletionRatios(week: WeekPlan): List<Float> = week.days.map { day ->
+    if (day.isEmpty()) 0f else day.count { it.done }.toFloat() / day.size
+}
+
 private data class DragEnd(val center: Offset, val absorbed: Boolean)
 
 private fun Modifier.starLabelAnchor(onAnchor: (Offset) -> Unit) = onGloballyPositioned { coordinates ->
     val baseline = coordinates[FirstBaseline]
     if (baseline != Int.MIN_VALUE) {
         onAnchor(coordinates.positionInRoot() + Offset(coordinates.size.width / 2f, baseline.toFloat()))
+    }
+}
+
+@Composable
+internal fun HomeDaySky(
+    ratios: List<Float>, todayIndex: Int, selectedDay: Int, overview: Boolean, reduceMotion: Boolean,
+    onDay: (Int) -> Unit, onOverview: () -> Unit, modifier: Modifier = Modifier,
+    externalOverview: Boolean = true, focusProgress: Float = if (overview) 0f else 1f,
+    overviewDate: String? = null, companions: List<PlanItem> = emptyList(),
+    focusedCompanionId: String? = null, onCompanion: (PlanItem) -> Unit = {},
+    onPrimaryBounds: (Rect?) -> Unit = {}, highlightPrimary: Boolean = false,
+    onWeekdayAnchor: (Offset) -> Unit = {}, onStarNameAnchor: (Offset) -> Unit = {},
+    backgroundTag: String = "sky_background", primaryTag: String = "primary_star",
+    primaryDescription: String? = null,
+    showWeekday: Boolean = true,
+    focusLabel: (@Composable () -> Unit)? = null
+) {
+    val focusedOpacity = if (externalOverview) focusedSkyOpacity(focusProgress) else 1f
+    Box(modifier) {
+        if (!externalOverview || !overview || focusProgress > 0f) {
+            WeekStarMap(ratios, todayIndex, selectedDay, overview && !externalOverview, reduceMotion, onDay,
+                onOverview, Modifier.matchParentSize().graphicsLayer { alpha = focusedOpacity },
+                companions, focusedCompanionId, onCompanion, onPrimaryBounds, highlightPrimary,
+                interactive = !externalOverview || !overview, backgroundTag = backgroundTag,
+                primaryTag = primaryTag, primaryDescription = primaryDescription)
+        }
+        if (overview && externalOverview && overviewDate != null) {
+            Text(overviewDate, color = Muted, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.graphicsLayer { alpha = 1f - focusProgress })
+        }
+        if (!overview && focusLabel != null) {
+            Box(Modifier.align(Alignment.TopStart)) { focusLabel() }
+        }
+        if (!overview || externalOverview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // The external sky draws the labels continuously. These nodes supply the final baselines.
+            val labelVisibility = if (overview) Modifier.clearAndSetSemantics {} else Modifier
+            if (showWeekday) {
+                Text(ShortWeekdays[selectedDay], color = if (externalOverview) Color.Transparent else Gold,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onWeekdayAnchor) else Modifier))
+            }
+            Text(StarNames[selectedDay], color = if (externalOverview) Color.Transparent else Ink,
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onStarNameAnchor) else Modifier))
+            Box(Modifier.width(84.dp).height(2.dp)
+                .graphicsLayer { alpha = if (overview) 0f else focusedOpacity }.background(Line)) {
+                Box(Modifier.fillMaxWidth(ratios[selectedDay]).height(2.dp).background(Gold))
+            }
+        }
     }
 }
 
@@ -96,7 +155,8 @@ fun HomeScreen(
     externalOverview: Boolean = false, focusProgress: Float = if (overview) 0f else 1f,
     canCompletePlans: Boolean = true,
     onSkyBounds: (Rect) -> Unit = {},
-    onWeekdayAnchor: (Offset) -> Unit = {}, onStarNameAnchor: (Offset) -> Unit = {}
+    onWeekdayAnchor: (Offset) -> Unit = {}, onStarNameAnchor: (Offset) -> Unit = {},
+    daySkyHeight: Dp = 212.dp
 ) {
     val date = monday.plusDays(selectedDay.toLong())
     val items = week.days[selectedDay]
@@ -162,11 +222,9 @@ fun HomeScreen(
         if (destination != null) latestToggle(moving.item)
     }
 
-    val ratios = week.days.map { day ->
-        if (day.isEmpty()) 0f else day.count { it.done }.toFloat() / day.size
-    }
+    val ratios = remember(week) { weekCompletionRatios(week) }
     val todayIndex = if (today in monday..monday.plusDays(6)) today.dayOfWeek.value - 1 else -1
-    val mapHeight by animateDpAsState(if (overview && !externalOverview) 348.dp else 212.dp,
+    val mapHeight by animateDpAsState(if (overview && !externalOverview) 348.dp else daySkyHeight,
         tween(if (reduceMotion) 0 else 800), label = "sky-height")
     val focusedOpacity = if (externalOverview) focusedSkyOpacity(focusProgress) else 1f
     val viewport = if (externalOverview) Modifier.onGloballyPositioned { coordinates ->
@@ -184,42 +242,16 @@ fun HomeScreen(
                 !externalOverview -> Modifier.testTag("overview")
                 else -> Modifier
             }
-            Box(Modifier.fillMaxWidth().height(mapHeight).then(viewport).then(mapTag)) {
-                if (!externalOverview || !overview || focusProgress > 0f) {
-                    WeekStarMap(ratios, todayIndex, selectedDay, overview && !externalOverview, reduceMotion, onDay,
-                        onOverview = {
-                            if (focusedCompanion != null) closeCompanion() else onOverview()
-                        }, modifier = Modifier.matchParentSize().graphicsLayer { alpha = focusedOpacity },
-                        companions = if (overview) emptyList() else companions,
-                        focusedCompanionId = focusedCompanion?.id,
-                        onCompanion = {
-                            if (activeDrag == null) focusId = it.id
-                        },
-                        onPrimaryBounds = { primaryBounds = it },
-                        highlightPrimary = dropTargetHighlighted, interactive = !externalOverview || !overview)
-                }
-                if (overview && externalOverview) {
-                    Text(weekRange(monday), color = Muted, style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.graphicsLayer { alpha = 1f - focusProgress })
-                }
-                if (!overview || externalOverview) Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // The sky draws both labels through the entire external transition. These
-                    // text nodes still supply their measured baselines and accessibility text.
-                    val labelVisibility = if (overview) Modifier.clearAndSetSemantics {} else Modifier
-                    Text(ShortWeekdays[selectedDay], color = if (externalOverview) Color.Transparent else Gold,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onWeekdayAnchor) else Modifier))
-                    Text(StarNames[selectedDay], color = if (externalOverview) Color.Transparent else Ink,
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = labelVisibility.then(if (externalOverview) Modifier.starLabelAnchor(onStarNameAnchor) else Modifier))
-                    Box(Modifier.width(84.dp).height(2.dp)
-                        .graphicsLayer { alpha = if (overview) 0f else focusedOpacity }.background(Line)) {
-                        Box(Modifier.fillMaxWidth(ratios[selectedDay]).height(2.dp).background(Gold))
-                    }
-                }
-            }
+            HomeDaySky(ratios, todayIndex, selectedDay, overview, reduceMotion, onDay,
+                onOverview = { if (focusedCompanion != null) closeCompanion() else onOverview() },
+                modifier = Modifier.fillMaxWidth().height(mapHeight).then(viewport).then(mapTag),
+                externalOverview = externalOverview, focusProgress = focusProgress,
+                overviewDate = weekRange(monday), companions = if (overview) emptyList() else companions,
+                focusedCompanionId = focusedCompanion?.id,
+                onCompanion = { if (activeDrag == null) focusId = it.id },
+                onPrimaryBounds = { primaryBounds = it },
+                highlightPrimary = dropTargetHighlighted, onWeekdayAnchor = onWeekdayAnchor,
+                onStarNameAnchor = onStarNameAnchor)
             if (!overview) {
                 SkyCard(Modifier.testTag("day_panel").graphicsLayer { alpha = focusedOpacity },
                     containerColor = Night.copy(alpha = .63f)) {

@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
@@ -98,24 +99,27 @@ internal fun rememberPlanReveal(reduceMotion: Boolean, vararg keys: Any?): PlanR
 @Composable
 internal fun PlanTile(title: String, category: String, modifier: Modifier = Modifier,
     done: Boolean? = null, containerColor: Color = if (done == true) Panel else PanelSoft,
+    filledCategory: Boolean = false,
     flash: () -> Float = { 0f }) {
     val tint = categoryColor(category)
-    Surface(color = containerColor,
+    val border = if (filledCategory) tint.copy(alpha = .46f) else if (done == true) Gold.copy(alpha = .32f) else Line
+    Surface(color = if (filledCategory) lerp(Night, tint, .25f).copy(alpha = .80f) else containerColor,
         shape = RoundedCornerShape(15.dp),
-        border = BorderStroke(1.dp, if (done == true) Gold.copy(alpha = .32f) else Line),
+        border = BorderStroke(1.dp, border),
         modifier = modifier) {
         Box {
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).sizeIn(minHeight = 68.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.fillMaxHeight().background(tint.copy(alpha = .12f))
+                if (!filledCategory) Box(Modifier.fillMaxHeight().background(tint.copy(alpha = .12f))
                     .padding(horizontal = 9.dp, vertical = 7.dp),
                     contentAlignment = Alignment.Center) {
-                    Text(category.toList().joinToString("\n"), color = tint,
+                    Text(categoryLabel(category).toList().joinToString("\n"), color = tint,
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 15.sp),
                         textAlign = TextAlign.Center)
                 }
                 Text(title, color = if (done == false) Muted else Ink,
                     style = MaterialTheme.typography.bodyMedium,
+                    textAlign = if (filledCategory) TextAlign.Center else TextAlign.Start,
                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 11.dp))
             }
             FourPointFlash(flash, Modifier.matchParentSize())
@@ -141,7 +145,7 @@ internal fun StarDetailDialog(title: String, category: String, tag: String,
             border = BorderStroke(1.dp, Line), modifier = Modifier.fillMaxWidth().testTag(tag)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(category, color = categoryColor(category), style = MaterialTheme.typography.labelMedium)
+                Text(categoryLabel(category), color = categoryColor(category), style = MaterialTheme.typography.labelMedium)
                 Text(title, style = MaterialTheme.typography.titleLarge)
                 content()
                 actions(close)

@@ -18,8 +18,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertValueEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -157,30 +159,37 @@ class LargeTextUiTest {
     // Host workaround only: https://github.com/robolectric/robolectric/issues/8460
     // The remaining layout/screenshot cases keep the 360dp phone viewport.
     @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi")
-    @Test fun customIdeaCapturesItsOriginalDateWhenTheWeekChanges() {
+    @Test fun customIdeaFromAllRequiresACategoryAndCapturesItsOriginalDate() {
         var date by mutableStateOf(LocalDate.of(2026, 11, 15))
         var addedWeek: String? = null
         var addedDay = -1
+        var addedCategory: String? = null
         compose.setContent {
             StarLiveTheme {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    IdeasScreen(date, mondayOf(date), 0, {}, 6, {}, WeekPlan.empty(),
-                        onAdd = { week, day, _, _, _ ->
-                            addedWeek = week
-                            addedDay = day
-                        }, onPlanner = {})
-                }
+                IdeasScreen(date, mondayOf(date), {}, 6, {}, WeekPlan.empty(),
+                    onAdd = { week, day, _, category, _ ->
+                        addedWeek = week
+                        addedDay = day
+                        addedCategory = category
+                    }, modifier = Modifier.padding(16.dp))
             }
         }
-        compose.onNodeWithTag("idea_custom", useUnmergedTree = true).performScrollTo().performClick()
+        compose.onNodeWithTag("idea_custom", useUnmergedTree = true).assertIsDisplayed().performClick()
+        compose.onNode(hasText("11 月 15 日 · 周日") and !hasTestTag("sparks_plan_date")).assertIsDisplayed()
+        compose.onNodeWithTag("plan_category_fixed", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("plan_category_picker", useUnmergedTree = true).assertIsDisplayed()
         compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.SetText) {
                 it(AnnotatedString("把这份想法留在原来的星期日"))
             }
+        val save = compose.onNodeWithText("保存到草稿").assertIsNotEnabled()
+        compose.onNode(hasText("阅读") and hasAnyAncestor(hasTestTag("plan_category_picker")))
+            .performScrollTo().performClick()
         compose.runOnIdle { date = LocalDate.of(2026, 11, 16) }
-        compose.onNodeWithText("保存到草稿").performClick()
+        save.performClick()
         assertEquals("2026-11-09", addedWeek)
         assertEquals(6, addedDay)
+        assertEquals("阅读", addedCategory)
     }
 
     // Robolectric #8460 affects editing dialogs above 320dp; no product workaround.
