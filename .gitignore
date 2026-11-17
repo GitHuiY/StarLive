@@ -25,3 +25,6 @@ __pycache__/
 *.aab
 /artifacts/
 captures/
+
+# Local background music asset
+/android/app/src/main/res/raw/river_flows_in_you.mp3

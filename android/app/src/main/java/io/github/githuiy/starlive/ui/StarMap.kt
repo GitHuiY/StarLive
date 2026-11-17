@@ -80,7 +80,7 @@ fun WeekStarMap(
     onCompanion: (PlanItem) -> Unit = {}, onPrimaryBounds: (Rect?) -> Unit = {},
     highlightPrimary: Boolean = false, interactive: Boolean = true,
     backgroundTag: String = "sky_background", primaryTag: String = "primary_star",
-    primaryDescription: String? = null
+    primaryDescription: String? = null, primaryClickLabel: String? = null, primaryActionEnabled: Boolean = true
 ) {
     val layoutDensity = LocalDensity.current
     val updatePrimaryBounds by rememberUpdatedState(onPrimaryBounds)
@@ -236,7 +236,9 @@ fun WeekStarMap(
                 }.size(48.dp).then(dropBounds).testTag(if (overview) "star_$index" else primaryTag).semantics {
                     contentDescription = primaryDescription ?:
                         "${ShortWeekdays[index]} · ${StarNames[index]}${if (index == todayIndex) "，今天" else ""}，完成${(ratios.getOrElse(index) { 0f } * 100).roundToInt()}%"
-                }.clickable(role = Role.Button) { onDay(index) })
+                }.then(if (overview || primaryActionEnabled) {
+                    Modifier.clickable(role = Role.Button, onClickLabel = if (overview) null else primaryClickLabel) { onDay(index) }
+                } else Modifier))
             }
         }
         visibleCompanions.forEachIndexed { slot, item ->

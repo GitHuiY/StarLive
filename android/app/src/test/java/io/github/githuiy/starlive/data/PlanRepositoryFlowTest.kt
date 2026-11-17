@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.githuiy.starlive.core.AppState
 import io.github.githuiy.starlive.core.BackupCodec
 import io.github.githuiy.starlive.core.PlanEngine
+import io.github.githuiy.starlive.core.PlanningHorizon
 import io.github.githuiy.starlive.core.ReminderSettings
 import io.github.githuiy.starlive.PosixAtomicFileShadow
 import java.time.LocalDate
@@ -49,24 +50,65 @@ class PlanRepositoryFlowTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    @Test fun confirmedCompletionAndSeparateDraftSurviveRepositoryReload() {
+    @Test fun directPlansAndCompletionSurviveRepositoryReload() {
         val repository = openRepository()
         val id = createConfirmed(repository, "整理衣物")
         repository.toggleCompletion(week, 0, id)
-        val nextWeek = PlanEngine.weekKey(today.plusWeeks(1))
-        repository.addDraftItem(nextWeek, 2, "下周读书", "阅读")
+        val lastWeek = PlanningHorizon.lastMonday(today).toString()
+        repository.addPlan(lastWeek, 6, "周末读书", "阅读")
 
         val saved = snapshot(repository)
         assertTrue(saved.weeks.getValue(week).days[0].single().done)
-        assertFalse(saved.weeks.containsKey(nextWeek))
-        assertEquals("下周读书", saved.drafts.getValue(nextWeek).days[2].single().title)
+        assertEquals("周末读书", saved.weeks.getValue(lastWeek).days[6].single().title)
+        assertTrue(saved.drafts.isEmpty())
+        val bookId = saved.weeks.getValue(lastWeek).days[6].single().id
+        repository.updatePlan(lastWeek, 6, bookId, "周末读书", "阅读", "带上纸笔")
+        snapshot(repository)
         repository.close()
 
-        val reloaded = snapshot(openRepository())
+        val reopened = openRepository()
+        val reloaded = snapshot(reopened)
         assertEquals(id, reloaded.weeks.getValue(week).days[0].single().id)
         assertTrue(reloaded.weeks.getValue(week).days[0].single().done)
-        assertFalse(reloaded.weeks.containsKey(nextWeek))
-        assertEquals("下周读书", reloaded.drafts.getValue(nextWeek).days[2].single().title)
+        assertEquals("带上纸笔", reloaded.weeks.getValue(lastWeek).days[6].single().body)
+        reopened.deletePlan(lastWeek, 6, bookId)
+        assertTrue(snapshot(reopened).weeks.getValue(lastWeek).days[6].isEmpty())
+    }
+
+    @Test fun legacyPlansOpenWithoutRewritingFilesAndPersistOnTheNextEdit() {
+        val original = legacyBackup()
+        AtomicPlanStorage(application).write(PlanSlot.PRIMARY, original.toByteArray(Charsets.UTF_8))
+        val filesBeforeOpening = personalFiles()
+        val repository = openRepository()
+
+        val merged = checkNotNull(repository.currentState.data)
+        assertTrue(merged.drafts.isEmpty())
+        assertEquals("保留的正式计划", merged.weeks.getValue(week).days[0].single().title)
+        assertEquals("未确认的旧灵感", merged.weeks.getValue(week).days[1].single().title)
+        assertEquals(filesBeforeOpening, personalFiles())
+
+        repository.addPlan(week, 2, "新计划", "运动")
+        val saved = snapshot(repository)
+        val savedFile = personalFiles().getValue(PlanSlot.PRIMARY.fileName)
+        assertEquals(BackupCodec.encode(saved), savedFile)
+        assertTrue(saved.drafts.isEmpty())
+        assertEquals("新计划", saved.weeks.getValue(week).days[2].single().title)
+    }
+
+    @Test fun importingLegacyDraftsShowsTheMergedPreviewAndCanRestoreTheOriginalState() {
+        val repository = openRepository()
+        createConfirmed(repository, "导入前的计划")
+        val before = personalFiles()
+        val preview = completed<BackupPreview> { repository.prepareImport(legacyBackup(), it) }.getOrThrow()
+        assertEquals(2, preview.summary.itemCount)
+        assertEquals(0, preview.summary.draftItemCount)
+        assertEquals(before, personalFiles())
+        completed<Unit> { repository.confirmImport(preview.token, it) }.getOrThrow()
+        assertEquals("未确认的旧灵感", snapshot(repository).weeks.getValue(week).days[1].single().title)
+
+        val restore = completed<BackupPreview> { repository.prepareRestore(it) }.getOrThrow()
+        completed<Unit> { repository.confirmRestore(restore.token, it) }.getOrThrow()
+        assertEquals("导入前的计划", snapshot(repository).weeks.getValue(week).days[0].single().title)
     }
 
     @Test fun importPreviewAndCancellingItDoNotWritePersonalFiles() {
@@ -132,7 +174,7 @@ class PlanRepositoryFlowTest {
             repository.prepareImport(backup("不应覆盖的新计划"), callback)
         }.getOrThrow()
 
-        repository.addDraftItem(week, 1, "预览之后的新草稿", "阅读")
+        repository.addPlan(week, 1, "预览之后的新计划", "阅读")
         val changedJson = exported(repository) // IO barrier after the accepted edit.
         val changedFiles = personalFiles()
         val rejected = completed<Unit> { repository.confirmImport(preview.token, it) }
@@ -145,7 +187,7 @@ class PlanRepositoryFlowTest {
         assertEquals(changedJson, BackupCodec.encode(current))
         assertEquals(changedFiles, personalFiles())
         assertEquals("当前正式计划", current.weeks.getValue(week).days[0].single().title)
-        assertEquals("预览之后的新草稿", current.drafts.getValue(week).days[1].single().title)
+        assertEquals("预览之后的新计划", current.weeks.getValue(week).days[1].single().title)
     }
 
     @Test fun backToBackSettingTransformsMergeAgainstLatestQueuedState() {
@@ -178,19 +220,19 @@ class PlanRepositoryFlowTest {
     @Test fun backToBackRelativeMovesExecuteBothActionsOnLatestOrder() {
         val repository = openRepository()
         listOf("第一件", "第二件", "第三件", "第四件").forEach { title ->
-            repository.addDraftItem(week, 0, title, "喜欢")
+            repository.addPlan(week, 0, title, "喜欢")
         }
-        val initial = snapshot(repository).drafts.getValue(week).days[0]
+        val initial = snapshot(repository).weeks.getValue(week).days[0]
         val id = initial[0].id
 
-        repository.moveDraftItemBy(week, 0, id, 1)
-        repository.moveDraftItemBy(week, 0, id, 1)
+        repository.movePlanBy(week, 0, id, 1)
+        repository.movePlanBy(week, 0, id, 1)
         val moved = snapshot(repository)
 
         assertEquals(listOf("第二件", "第三件", "第一件", "第四件"),
-            moved.drafts.getValue(week).days[0].map { it.title })
-        assertEquals(id, moved.drafts.getValue(week).days[0][2].id)
-        assertTrue("Moving a draft must not confirm it", moved.weeks.isEmpty())
+            moved.weeks.getValue(week).days[0].map { it.title })
+        assertEquals(id, moved.weeks.getValue(week).days[0][2].id)
+        assertTrue(moved.drafts.isEmpty())
     }
 
     private fun openRepository(): PlanRepository {
@@ -203,17 +245,22 @@ class PlanRepositoryFlowTest {
     }
 
     private fun createConfirmed(repository: PlanRepository, title: String): String {
-        repository.addDraftItem(week, 0, title, "喜欢")
-        repository.confirmDraft(week)
+        repository.addPlan(week, 0, title, "喜欢")
         return snapshot(repository).weeks.getValue(week).days[0].single().id
     }
 
     private fun backup(title: String, continuousMinutes: Int = 60): String {
         val engine = PlanEngine(today)
-        val draft = engine.addDraftItem(AppState.empty(), week, 0, title, "阅读")
-        val confirmed = engine.confirmDraft(draft, week)
+        val confirmed = engine.addPlan(AppState.empty(), week, 0, title, "阅读", "")
         return BackupCodec.encode(engine.updateSettings(confirmed,
             ReminderSettings(continuousMinutes, 60, 180, true, true, true)))
+    }
+
+    private fun legacyBackup(): String {
+        val engine = PlanEngine(today)
+        val original = engine.addPlan(AppState.empty(), week, 0, "保留的正式计划", "阅读", "")
+        val legacy = engine.addDraftItem(original, week, 1, "未确认的旧灵感", "喜欢")
+        return BackupCodec.encode(legacy)
     }
 
     private fun exported(repository: PlanRepository): String {

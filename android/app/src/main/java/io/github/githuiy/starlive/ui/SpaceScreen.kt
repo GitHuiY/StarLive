@@ -62,7 +62,7 @@ fun SpaceScreen(settings: ReminderSettings, timezone: String,
         }
         SkyCard(containerColor = Night.copy(alpha = .78f)) {
             Text("把期待，好好保存。", style = MaterialTheme.typography.titleLarge)
-            Text("手动备份包含已确认计划、草稿、完成状态和提醒设置。",
+            Text("手动备份包含计划、完成状态和提醒设置。",
                 color = Ink, style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = onExport, enabled = !backupBusy,
                 modifier = Modifier.fillMaxWidth().testTag("backup_export")) { Text("导出本地备份") }

@@ -16,6 +16,8 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
+internal fun firstSparksBrowsingWeek(today: LocalDate): LocalDate = mondayOf(today).minusWeeks(4)
+
 internal data class SparksWeekSlide(
     val monday: LocalDate,
     val nextMonday: LocalDate = monday,

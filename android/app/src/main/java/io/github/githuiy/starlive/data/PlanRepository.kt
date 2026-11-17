@@ -54,7 +54,8 @@ class PlanRepository internal constructor(context: Context, private val storage:
             try {
                 // openRead also recovers AtomicFile's own interrupted-write backup.
                 val bytes = storage.read(PlanSlot.PRIMARY)
-                data = bytes?.let { BackupCodec.decode(readUtf8(it)).data } ?: AppState.empty()
+                data = bytes?.let { PlanEngine.mergeLegacyDrafts(BackupCodec.decode(readUtf8(it)).data) }
+                    ?: AppState.empty()
                 val recoveryWarning = finishCommittedJournal(bytes)
                 publish(RepositoryState(data, false, recoveryWarning))
             } catch (failure: Exception) {
@@ -89,49 +90,32 @@ class PlanRepository internal constructor(context: Context, private val storage:
         else engine().toggleCompletion(state, week, day, id)
     }
 
-    fun addDraftItem(week: String, day: Int, title: String, category: String) =
-        addDraftItem(week, day, title, category, "")
-
-    fun addDraftItem(week: String, day: Int, title: String, category: String, body: String) = mutate {
-        engine().addDraftItem(it, week, day, title, category, body)
+    fun addPlan(week: String, day: Int, title: String, category: String, body: String = "") = mutate {
+        engine().addPlan(it, week, day, title, category, body)
     }
 
-    fun addSparksDraftItem(week: String, day: Int, title: String, category: String, body: String) = mutate {
-        engine().addSparksDraftItem(it, week, day, title, category, body)
+    fun updatePlan(week: String, day: Int, id: String, title: String, category: String, body: String) = mutate {
+        engine().updatePlan(it, week, day, id, title, category, body)
     }
 
-    fun updateDraftItem(week: String, day: Int, id: String, title: String, category: String) = mutate {
-        engine().updateDraftItem(it, week, day, id, title, category)
+    fun deletePlan(week: String, day: Int, id: String) = mutate {
+        engine().deletePlan(it, week, day, id)
     }
 
-    fun updateDraftItem(week: String, day: Int, id: String, title: String, category: String, body: String) = mutate {
-        engine().updateDraftItem(it, week, day, id, title, category, body)
-    }
-
-    fun deleteDraftItem(week: String, day: Int, id: String) = mutate {
-        engine().deleteDraftItem(it, week, day, id)
-    }
-
-    fun moveDraftItem(week: String, fromDay: Int, id: String, toDay: Int, toIndex: Int) = mutate {
-        engine().moveDraftItem(it, week, fromDay, id, toDay, toIndex)
-    }
-
-    fun moveDraftItemBy(week: String, day: Int, id: String, delta: Int) = mutate { state ->
-        val items = PlanEngine.draft(state, week).days[day]
+    fun movePlanBy(week: String, day: Int, id: String, delta: Int) = mutate { state ->
+        val items = PlanEngine.confirmed(state, week).days[day]
         val index = items.indexOfFirst { it.id == id }
         require(index >= 0) { "事项不存在，请刷新后重试" }
         val destination = (index.toLong() + delta).coerceIn(0, (items.size - 1).toLong()).toInt()
         if (destination == index) state
-        else engine().moveDraftItem(state, week, day, id, day, destination)
+        else engine().movePlan(state, week, day, id, day, destination)
     }
 
-    fun moveDraftItemToDay(week: String, fromDay: Int, id: String, toDay: Int) = mutate { state ->
+    fun movePlanToDay(week: String, fromDay: Int, id: String, toDay: Int) = mutate { state ->
         if (fromDay == toDay) state
-        else engine().moveDraftItem(state, week, fromDay, id, toDay,
-            PlanEngine.draft(state, week).days[toDay].size)
+        else engine().movePlan(state, week, fromDay, id, toDay,
+            PlanEngine.confirmed(state, week).days[toDay].size)
     }
-
-    fun confirmDraft(week: String) = mutate { engine().confirmDraft(it, week) }
 
     fun updateSettings(settings: ReminderSettings) = mutate { engine().updateSettings(it, settings) }
 
@@ -189,11 +173,13 @@ class PlanRepository internal constructor(context: Context, private val storage:
     }
 
     private fun preview(backup: BackupCodec.Prepared, restore: Boolean): BackupPreview {
+        val merged = PlanEngine.mergeLegacyDrafts(backup.data)
+        val preparedBackup = if (merged === backup.data) backup else BackupCodec.decode(BackupCodec.encode(merged))
         val token = UUID.randomUUID().toString()
-        prepared = PendingPreview(token, backup, revision, restore)
-        val weeks = (backup.data.weeks.keys + backup.data.drafts.keys).sorted()
-        return BackupPreview(token, backup.summary, weeks.firstOrNull(), weeks.lastOrNull(),
-            backup.data.settings)
+        prepared = PendingPreview(token, preparedBackup, revision, restore)
+        val weeks = preparedBackup.data.weeks.keys.sorted()
+        return BackupPreview(token, preparedBackup.summary, weeks.firstOrNull(), weeks.lastOrNull(),
+            preparedBackup.data.settings)
     }
 
     private fun replacePrepared(token: String, restore: Boolean) {
@@ -281,7 +267,7 @@ class PlanRepository internal constructor(context: Context, private val storage:
         writesBlocked = true
         revision++
         prepared = null
-        data = try { observed?.let { BackupCodec.decode(readUtf8(it)).data } }
+        data = try { observed?.let { PlanEngine.mergeLegacyDrafts(BackupCodec.decode(readUtf8(it)).data) } }
         catch (invalid: Exception) { null }
     }
 

@@ -182,7 +182,7 @@ class LargeTextUiTest {
             .performSemanticsAction(SemanticsActions.SetText) {
                 it(AnnotatedString("把这份想法留在原来的星期日"))
             }
-        val save = compose.onNodeWithText("保存到草稿").assertIsNotEnabled()
+        val save = compose.onNodeWithText("保存计划").assertIsNotEnabled()
         compose.onNode(hasText("阅读") and hasAnyAncestor(hasTestTag("plan_category_picker")))
             .performScrollTo().performClick()
         compose.runOnIdle { date = LocalDate.of(2026, 11, 16) }
@@ -210,7 +210,7 @@ class LargeTextUiTest {
         }
         compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(replacement)) }
-        compose.onNodeWithText("保存到草稿").performClick()
+        compose.onNodeWithText("保存计划").performClick()
         assertEquals(replacement, savedTitle)
         assertEquals("导入的自定义类别", savedCategory)
     }

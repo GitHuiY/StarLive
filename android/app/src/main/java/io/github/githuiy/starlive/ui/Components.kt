@@ -152,18 +152,23 @@ fun CategoryMark(category: String, modifier: Modifier = Modifier) {
 @Composable
 fun TaskEditorDialog(initialTitle: String, initialCategory: String?, editing: Boolean,
     onDismiss: () -> Unit, initialBody: String = "", fixedCategory: Boolean = false,
-    dateLabel: String? = null, onSave: (String, String, String) -> Unit) {
+    dateLabel: String? = null, onDelete: (() -> Unit)? = null, onSave: (String, String, String) -> Unit) {
     var title by remember { mutableStateOf(initialTitle) }
     var category by remember { mutableStateOf(initialCategory) }
     var body by remember { mutableStateOf(initialBody) }
-    AlertDialog(onDismissRequest = onDismiss,
+    var confirmingDeletion by remember { mutableStateOf(false) }
+    if (confirmingDeletion && onDelete != null) {
+        DeletePlanDialog(initialTitle, onCancel = { confirmingDeletion = false }, onDelete = onDelete)
+        return
+    }
+    AlertDialog(onDismissRequest = onDismiss, modifier = Modifier.testTag("plan_editor"),
         title = { Text(if (editing) "调整这份期待" else "留一件想做的小事") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (dateLabel != null) Text(dateLabel, color = Gold)
                 OutlinedTextField(value = title, onValueChange = { if (it.length <= BackupCodec.MAX_TITLE_LENGTH) title = it },
                     label = { Text("想做什么") }, minLines = 2,
-                    supportingText = { Text("${title.length}/${BackupCodec.MAX_TITLE_LENGTH} · 保存在草稿中") })
+                    supportingText = { Text("${title.length}/${BackupCodec.MAX_TITLE_LENGTH}") })
                 OutlinedTextField(value = body, onValueChange = { if (it.length <= BackupCodec.MAX_BODY_LENGTH) body = it },
                     label = { Text("正文（可选）") }, minLines = 3, maxLines = 6,
                     modifier = Modifier.fillMaxWidth().testTag("plan_body"))
@@ -179,10 +184,28 @@ fun TaskEditorDialog(initialTitle: String, initialCategory: String?, editing: Bo
             }
         },
         confirmButton = { Button(onClick = { category?.let { onSave(title.trim(), it, body) } },
-            enabled = title.isNotBlank() && category != null) {
-            Text("保存到草稿")
+            enabled = title.isNotBlank() && category != null, modifier = Modifier.testTag("plan_editor_save")) {
+            Text("保存计划")
         } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+        dismissButton = {
+            if (onDelete != null) {
+                TextButton(onClick = { confirmingDeletion = true }, modifier = Modifier.testTag("plan_editor_delete")) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            }
+            TextButton(onClick = onDismiss) { Text("取消") }
+        })
+}
+
+@Composable
+internal fun DeletePlanDialog(title: String, onCancel: () -> Unit, onDelete: () -> Unit) {
+    AlertDialog(onDismissRequest = onCancel, title = { Text("删除这条计划？") },
+        text = { Text("“$title”将从当天的计划中移除。") },
+        confirmButton = {
+            TextButton(onClick = onDelete, modifier = Modifier.testTag("plan_delete_confirm")) {
+                Text("删除", color = MaterialTheme.colorScheme.error)
+            }
+        }, dismissButton = { TextButton(onClick = onCancel) { Text("保留") } })
 }
 
 @Composable

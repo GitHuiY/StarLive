@@ -100,7 +100,9 @@ internal fun HomeDaySky(
     backgroundTag: String = "sky_background", primaryTag: String = "primary_star",
     primaryDescription: String? = null,
     showWeekday: Boolean = true,
-    focusLabel: (@Composable () -> Unit)? = null
+    focusLabel: (@Composable () -> Unit)? = null,
+    primaryClickLabel: String? = null,
+    primaryActionEnabled: Boolean = true
 ) {
     val focusedOpacity = if (externalOverview) focusedSkyOpacity(focusProgress) else 1f
     Box(modifier) {
@@ -109,7 +111,8 @@ internal fun HomeDaySky(
                 onOverview, Modifier.matchParentSize().graphicsLayer { alpha = focusedOpacity },
                 companions, focusedCompanionId, onCompanion, onPrimaryBounds, highlightPrimary,
                 interactive = !externalOverview || !overview, backgroundTag = backgroundTag,
-                primaryTag = primaryTag, primaryDescription = primaryDescription)
+                primaryTag = primaryTag, primaryDescription = primaryDescription,
+                primaryClickLabel = primaryClickLabel, primaryActionEnabled = primaryActionEnabled)
         }
         if (overview && externalOverview && overviewDate != null) {
             Text(overviewDate, color = Muted, style = MaterialTheme.typography.bodySmall,

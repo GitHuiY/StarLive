@@ -49,7 +49,7 @@ import java.time.LocalDate
 @Composable
 internal fun SparksWeekPicker(today: LocalDate, selectedWeek: LocalDate, onWeekSelected: (LocalDate) -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true, menuHeight: Dp = 200.dp) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember(selectedWeek) { mutableStateOf(false) }
     val isOpen = enabled && expanded
     val first = PlanningHorizon.firstMonday(today)
     val last = PlanningHorizon.lastMonday(today)
@@ -117,9 +117,10 @@ internal fun SparksWeekPicker(today: LocalDate, selectedWeek: LocalDate, onWeekS
 @Composable
 private fun WeekLabel(monday: LocalDate, today: LocalDate, first: LocalDate, color: Color,
     emphasized: Boolean) {
-    val suffix = when (monday) {
-        first -> "  ·  本周"
-        first.plusWeeks(1) -> "  ·  下周"
+    val suffix = when {
+        monday.isBefore(first) -> "  ·  历史"
+        monday == first -> "  ·  本周"
+        monday == first.plusWeeks(1) -> "  ·  下周"
         else -> ""
     }
     BasicText(sparksWeekDateRange(monday, today) + suffix,

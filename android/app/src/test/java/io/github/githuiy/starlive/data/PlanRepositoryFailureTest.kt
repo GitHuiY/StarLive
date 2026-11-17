@@ -152,7 +152,7 @@ class PlanRepositoryFailureTest {
         assertNull(repo.currentState.data)
         assertNotNull(repo.currentState.error)
 
-        repo.addDraftItem(PlanEngine.weekKey(LocalDate.now()), 0, "不应覆盖", "喜欢")
+        repo.addPlan(PlanEngine.weekKey(LocalDate.now()), 0, "不应覆盖", "喜欢")
         result<String> { repo.exportJson(it) }
         assertArrayEquals(corrupt, storage.read(PlanSlot.PRIMARY))
         assertEquals(0, storage.primaryWriteCount.get())
@@ -209,8 +209,8 @@ class PlanRepositoryFailureTest {
         val week = PlanEngine.weekKey(today)
         val engine = PlanEngine(today)
         var state = AppState.empty()
-        repeat(count) { state = engine.addDraftItem(state, week, 0, "事项 $it", "喜欢") }
-        return engine.confirmDraft(state, week)
+        repeat(count) { state = engine.addPlan(state, week, 0, "事项 $it", "喜欢", "") }
+        return state
     }
 
     private fun bytes(state: AppState) = BackupCodec.encode(state).toByteArray(StandardCharsets.UTF_8)

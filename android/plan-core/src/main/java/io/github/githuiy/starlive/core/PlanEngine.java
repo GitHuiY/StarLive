@@ -3,6 +3,7 @@ package io.github.githuiy.starlive.core;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,52 @@ public final class PlanEngine {
 
     public AppState addSparksDraftItem(AppState state, String week, int day,
             String title, String category, String body) {
+        editablePlanDate(week, day);
+        return appendDraftItem(state, week, day, title, category, body);
+    }
+
+    public AppState addPlan(AppState state, String week, int day,
+            String title, String category, String body) {
+        editablePlanDate(week, day);
+        String normalizedTitle = planTitle(title, category, body);
+        List<List<PlanItem>> days = confirmed(state, week).mutableDays();
+        for (PlanItem item : days.get(day)) {
+            if (item.title.trim().equals(normalizedTitle)) return state;
+        }
+        days.get(day).add(new PlanItem(UUID.randomUUID().toString(), normalizedTitle, category, false, body));
+        return withConfirmed(state, week, new WeekPlan(days));
+    }
+
+    public AppState updatePlan(AppState state, String week, int day, String id,
+            String title, String category, String body) {
+        editablePlanDate(week, day);
+        String normalizedTitle = planTitle(title, category, body);
+        List<List<PlanItem>> days = confirmed(state, week).mutableDays();
+        int index = indexOf(days.get(day), id);
+        PlanItem old = days.get(day).get(index);
+        if (old.title.equals(normalizedTitle) && old.category.equals(category) && old.body.equals(body)) return state;
+        days.get(day).set(index, new PlanItem(id, normalizedTitle, category,
+                old.done && old.title.trim().equals(normalizedTitle), body));
+        return withConfirmed(state, week, new WeekPlan(days));
+    }
+
+    public AppState deletePlan(AppState state, String week, int day, String id) {
+        editablePlanDate(week, day);
+        List<List<PlanItem>> days = confirmed(state, week).mutableDays();
+        days.get(day).remove(indexOf(days.get(day), id));
+        return withConfirmed(state, week, new WeekPlan(days));
+    }
+
+    /** toIndex is the final index after removal, also for same-day reordering. */
+    public AppState movePlan(AppState state, String week, int fromDay, String id, int toDay, int toIndex) {
+        editablePlanDate(week, fromDay);
+        checkDay(toDay);
+        List<List<PlanItem>> days = confirmed(state, week).mutableDays();
+        moveItem(days, fromDay, id, toDay, toIndex);
+        return withConfirmed(state, week, new WeekPlan(days));
+    }
+
+    private void editablePlanDate(String week, int day) {
         checkDay(day);
         if (week == null) throw new IllegalArgumentException("周计划日期无效");
         LocalDate monday;
@@ -59,7 +106,6 @@ public final class PlanEngine {
         if (!PlanningHorizon.includes(today, monday)) {
             throw new IllegalArgumentException("请选择本周起至未来三个月内的完整周");
         }
-        return appendDraftItem(state, week, day, title, category, body);
     }
 
     private AppState appendDraftItem(AppState state, String week, int day,
@@ -108,12 +154,17 @@ public final class PlanEngine {
         editable(week, fromDay);
         checkDay(toDay);
         List<List<PlanItem>> days = draft(state, week).mutableDays();
+        moveItem(days, fromDay, id, toDay, toIndex);
+        return withDraft(state, week, new WeekPlan(days));
+    }
+
+    private static void moveItem(List<List<PlanItem>> days, int fromDay,
+            String id, int toDay, int toIndex) {
         PlanItem old = days.get(fromDay).remove(indexOf(days.get(fromDay), id));
         List<PlanItem> target = days.get(toDay);
         if (toIndex < 0 || toIndex > target.size()) throw new IllegalArgumentException("排序位置无效");
         target.add(toIndex, new PlanItem(old.id, old.title, old.category,
                 fromDay == toDay && old.done, old.body));
-        return withDraft(state, week, new WeekPlan(days));
     }
 
     public AppState toggleCompletion(AppState state, String week, int day, String id) {
@@ -122,10 +173,8 @@ public final class PlanEngine {
         int index = indexOf(days.get(day), id);
         PlanItem item = days.get(day).get(index);
         days.get(day).set(index, new PlanItem(item.id, item.title, item.category, !item.done, item.body));
-        Map<String, WeekPlan> weeks = new LinkedHashMap<>(state.weeks);
-        weeks.put(week, new WeekPlan(days));
         // An open draft intentionally stays untouched; confirmation merges latest done.
-        return new AppState(weeks, state.drafts, state.settings);
+        return withConfirmed(state, week, new WeekPlan(days));
     }
 
     public AppState confirmDraft(AppState state, String week) {
@@ -160,6 +209,59 @@ public final class PlanEngine {
         return new AppState(state.weeks, state.drafts, settings);
     }
 
+    /** Keeps confirmed items unless a saved draft explicitly edits or moves the same ID. */
+    public static AppState mergeLegacyDrafts(AppState state) {
+        if (state.drafts.isEmpty()) return state;
+        Map<String, PlanLocation> previous = new LinkedHashMap<>();
+        for (Map.Entry<String, WeekPlan> week : state.weeks.entrySet()) {
+            for (int day = 0; day < week.getValue().days.size(); day++) {
+                for (PlanItem item : week.getValue().days.get(day)) {
+                    previous.put(item.id, new PlanLocation(week.getKey(), day, item));
+                }
+            }
+        }
+        Map<String, List<List<PlanItem>>> merged = new LinkedHashMap<>();
+        state.weeks.keySet().forEach(week -> merged.put(week, WeekPlan.empty().mutableDays()));
+        for (Map.Entry<String, WeekPlan> week : state.drafts.entrySet()) {
+            for (int day = 0; day < week.getValue().days.size(); day++) {
+                for (PlanItem item : week.getValue().days.get(day)) {
+                    String title = item.title.trim();
+                    if (title.isEmpty()) continue;
+                    PlanLocation old = previous.remove(item.id);
+                    boolean done = old != null && old.week.equals(week.getKey()) && old.day == day
+                            && old.item.done && old.item.title.trim().equals(title);
+                    merged.computeIfAbsent(week.getKey(), key -> WeekPlan.empty().mutableDays())
+                            .get(day).add(new PlanItem(item.id, title, item.category, done, item.body));
+                }
+            }
+        }
+        for (PlanLocation entry : previous.values()) {
+            merged.computeIfAbsent(entry.week, week -> WeekPlan.empty().mutableDays())
+                    .get(entry.day).add(entry.item);
+        }
+        Map<String, WeekPlan> weeks = new LinkedHashMap<>();
+        merged.forEach((week, days) -> weeks.put(week, new WeekPlan(days)));
+        return new AppState(weeks, Collections.emptyMap(), state.settings);
+    }
+
+    private static final class PlanLocation {
+        final String week;
+        final int day;
+        final PlanItem item;
+
+        PlanLocation(String week, int day, PlanItem item) {
+            this.week = week;
+            this.day = day;
+            this.item = item;
+        }
+    }
+
+    private AppState withConfirmed(AppState state, String week, WeekPlan plan) {
+        Map<String, WeekPlan> weeks = new LinkedHashMap<>(state.weeks);
+        weeks.put(week, plan);
+        return new AppState(weeks, state.drafts, state.settings);
+    }
+
     private AppState withDraft(AppState state, String week, WeekPlan plan) {
         Map<String, WeekPlan> drafts = new LinkedHashMap<>(state.drafts);
         drafts.put(week, plan);
@@ -191,5 +293,12 @@ public final class PlanEngine {
         if (body == null || body.length() > BackupCodec.MAX_BODY_LENGTH) {
             throw new IllegalArgumentException("事项正文无效或过长");
         }
+    }
+
+    private static String planTitle(String title, String category, String body) {
+        checkText(title, category, body);
+        String trimmed = title.trim();
+        if (trimmed.isEmpty()) throw new IllegalArgumentException("事项标题不能为空");
+        return trimmed;
     }
 }

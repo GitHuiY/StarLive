@@ -15,15 +15,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -33,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -45,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -106,7 +111,10 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     var followToday by rememberSaveable { mutableStateOf(true) }
     var autoFocusToday by rememberSaveable { mutableStateOf(true) }
     val snackbar = remember { SnackbarHostState() }
+    var musicError by remember { mutableStateOf<String?>(null) }
+    val music = rememberBackgroundMusic { musicError = it }
     val scroll = rememberScrollState()
+    val withinState = rememberSaveableStateHolder()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
     var introDecisionMade by rememberSaveable { mutableStateOf(false) }
@@ -128,8 +136,12 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     val historicalWeek = monday.isBefore(currentMonday)
     val weekKey = monday.toString()
     val requestedSparksMonday = sparksWeekKey?.let(LocalDate::parse)
-    val sparksMonday = requestedSparksMonday?.coerceIn(currentMonday, PlanningHorizon.lastMonday(today)) ?: monday
-    val displayedSparksDay = sparksDay?.takeIf { PlanningHorizon.includes(today, sparksMonday.plusDays(it.toLong())) }
+    val sparksWeeks = firstSparksBrowsingWeek(today)..PlanningHorizon.lastMonday(today)
+    val sparksMonday = (requestedSparksMonday ?: currentMonday.plusWeeks(offset.toLong()))
+        .coerceIn(sparksWeeks)
+    val displayedSparksDay = sparksDay?.takeIf {
+        it in 0..6 && (requestedSparksMonday == null || requestedSparksMonday == sparksMonday)
+    }
 
     fun navigate(target: String) {
         introDecisionMade = true
@@ -243,6 +255,12 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     LaunchedEffect(notice) {
         if (notice != null) { snackbar.showSnackbar(notice); onNoticeConsumed() }
     }
+    LaunchedEffect(musicError) {
+        musicError?.let {
+            snackbar.showSnackbar(it)
+            musicError = null
+        }
+    }
     BackHandler(enabled = page != "stars" || !overview || historicalWeek) {
         introDecisionMade = true
         autoFocusToday = false
@@ -270,7 +288,8 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         .semantics { testTagsAsResourceId = true }) {
         val homeSky = page == "stars" && data != null
         val sparksSky = page == "ideas" && data != null
-        val contentOverSky = page == "ideas" || page == "space"
+        val within = page == "ability"
+        val contentOverSky = page == "ideas" || page == "space" || within
         // Keep the fitted illustration mounted across tab changes, including the planner.
         Image(painterResource(R.drawable.monday_sky_plate), contentDescription = null,
             modifier = Modifier.fillMaxSize().background(Night), contentScale = ContentScale.Fit)
@@ -287,25 +306,28 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                 reduceMotion = reduceMotion, showLabels = false, interactive = false)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 listOf(Night.copy(alpha = .13f), Night.copy(alpha = .24f)))))
-        } else if (!homeSky && !sparksSky) {
+        } else if (!homeSky && !sparksSky && !within) {
             Box(Modifier.fillMaxSize().background(Night))
         }
         Scaffold(containerColor = Color.Transparent, contentColor = Ink,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 10.dp),
+                val horizontalInsets = if (within) {
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                } else Modifier
+                Row(Modifier.fillMaxWidth().statusBarsPadding().then(horizontalInsets)
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f).sizeIn(minHeight = 54.dp).clickable {
-                        navigate("stars"); overview = true
-                    }, verticalArrangement = Arrangement.Center) {
+                    Column(Modifier.weight(1f).sizeIn(minHeight = 54.dp)
+                        .clickable { navigate("stars"); overview = true },
+                        verticalArrangement = Arrangement.Center) {
                         Text("✦  StarLive", fontFamily = FontFamily.Serif, fontSize = 23.sp, color = Ink)
                         Text("SEVEN DAYS, YOUR WAY", style = MaterialTheme.typography.labelSmall,
                             color = Muted.copy(alpha = .75f))
                     }
-                    OutlinedButton(onClick = { navigate("planner") },
-                        modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("open_planner")) {
-                        Text("Weekly Plan", fontFamily = FontFamily.Serif)
+                    Box(Modifier.width(96.dp), contentAlignment = Alignment.CenterEnd) {
+                        MusicControl(playing = music.isPlaying, onToggle = music::toggle, reduceMotion = reduceMotion)
                     }
                 }
             },
@@ -317,7 +339,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                     windowInsets = WindowInsets.navigationBars
                 ) {
                     listOf(Triple("stars", "✦", "Starmap"), Triple("ideas", "✧", "Sparks"),
-                        Triple("space", "☾", "Daylight")).forEach { (route, icon, label) ->
+                        Triple("space", "☾", "Daylight"), Triple("ability", "◇", "Within")).forEach { (route, icon, label) ->
                         val selected = page == route
                         NavigationBarItem(selected = selected, onClick = { navigate(route) },
                             icon = { Text(icon, fontSize = 23.sp, fontFamily = FontFamily.Serif) },
@@ -343,15 +365,26 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
             }
             if (page == "ideas" && data != null) {
                 IdeasScreen(today, sparksMonday, onWeekSelected = { week ->
-                    sparksWeekKey = week.toString()
-                    sparksDay = null
+                    if (week in sparksWeeks) {
+                        sparksWeekKey = week.toString()
+                        sparksDay = null
+                    }
                 }, day = displayedSparksDay, onDay = { day ->
                     sparksDay = day
                     if (sparksMonday == monday) chooseEditorDay(day)
-                }, draft = PlanEngine.draft(data, sparksMonday.toString()), onAdd = repository::addSparksDraftItem,
+                }, plans = PlanEngine.confirmed(data, sparksMonday.toString()), onAdd = repository::addPlan,
                     reduceMotion = reduceMotion,
                     onOverview = { sparksDay = null }, notice = error,
-                    contentPadding = inner, confirmedWeek = { PlanEngine.confirmed(data, it.toString()) })
+                    contentPadding = inner, confirmedWeek = { PlanEngine.confirmed(data, it.toString()) },
+                    onOpenPlanner = { week, day ->
+                        chooseWeek(if (week == currentMonday) 0 else 1)
+                        chooseEditorDay(day)
+                        navigate("planner")
+                    }, onUpdate = repository::updatePlan, onDelete = repository::deletePlan)
+            } else if (within) {
+                withinState.SaveableStateProvider("within") {
+                    WithinScreen(contentPadding = inner, today = today, reduceMotion = reduceMotion)
+                }
             } else Column(content.verticalScroll(scroll)
                 .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (error != null) SmallNotice(error)
@@ -377,16 +410,10 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                         onSkyBounds = { focusBounds = it }, onWeekdayAnchor = { weekdayAnchor = it },
                         onStarNameAnchor = { starNameAnchor = it }, daySkyHeight = daySkyHeight)
                     page == "planner" -> PlannerScreen(today, monday, offset, ::chooseWeek,
-                        selectedDay, ::chooseEditorDay, PlanEngine.draft(data, weekKey), data.weeks.containsKey(weekKey),
-                        onIdeas = { navigate("ideas") }, onAdd = repository::addDraftItem,
-                        onUpdate = repository::updateDraftItem, onDelete = repository::deleteDraftItem,
-                        onMoveBy = repository::moveDraftItemBy,
-                        onMoveToDay = repository::moveDraftItemToDay, onConfirm = { confirmedWeek ->
-                            repository.confirmDraft(confirmedWeek)
-                            archivedWeek = null; energyExpanded = false
-                            page = "stars"; overview = false
-                            offset = if (confirmedWeek == mondayOf(today).toString()) 0 else 1
-                        })
+                        selectedDay, ::chooseEditorDay, PlanEngine.confirmed(data, weekKey),
+                        onIdeas = { navigate("ideas") }, onAdd = repository::addPlan,
+                        onUpdate = repository::updatePlan, onDelete = repository::deletePlan,
+                        onMoveBy = repository::movePlanBy, onMoveToDay = repository::movePlanToDay)
                     page == "space" -> SpaceScreen(data.settings, timezone, { transform -> repository.updateSettings(transform) },
                         backupBusy, onExport, onImport, onRestore, monitoringContent)
                 }
@@ -414,13 +441,13 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
             AlertDialog(onDismissRequest = { if (!backupBusy) onCancelPreview() },
                 title = { Text(if (restoring) "预览恢复上次备份" else "预览导入的备份") },
                 text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("已确认周计划：${summary.weekCount} 周\n草稿：${summary.draftWeekCount} 周\n正式事项：${summary.itemCount} 条\n草稿事项：${summary.draftItemCount} 条\n已完成：${summary.completedItemCount} 条")
+                    Text("周计划：${summary.weekCount} 周\n事项：${summary.itemCount} 条\n已完成：${summary.completedItemCount} 条")
                     Text(if (preview.firstWeek == null) "日期范围：无周计划"
                         else "周起始日期：${preview.firstWeek} — ${preview.lastWeek}", color = Gold)
                     val settings = preview.settings
                     Text("将恢复的提醒规则\n连续：${settings.continuousMinutes} 分钟 · ${if (settings.continuousEnabled) "开启" else "关闭"}\n单应用每日：${settings.perAppDailyMinutes} 分钟 · ${if (settings.perAppDailyEnabled) "开启" else "关闭"}\n每日合计：${settings.totalDailyMinutes} 分钟 · ${if (settings.totalDailyEnabled) "开启" else "关闭"}",
                         style = MaterialTheme.typography.bodySmall, color = Muted)
-                    Text("确认后将覆盖本机计划、草稿和提醒设置。覆盖前会保留一份本机备份，可手动恢复。",
+                    Text("确认后将覆盖本机计划和提醒设置。覆盖前会保留一份本机备份，可手动恢复。",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                 } }, confirmButton = { Button(onClick = onConfirmPreview, enabled = !backupBusy,
                     modifier = Modifier.testTag("backup_confirm")) { Text(if (backupBusy) "正在恢复…" else "确认覆盖并恢复") } },

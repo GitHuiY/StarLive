@@ -7,10 +7,14 @@ import android.provider.Settings
 import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertContentDescriptionContains
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertValueEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
@@ -201,6 +205,13 @@ class StarLiveUiTest {
             .performTouchInput { click(Offset(width * 0.08f, height * 0.1f)) }
     }
 
+    private fun openMondayPlannerFromSparks() {
+        compose.onNodeWithTag("nav_ideas").performClick()
+        sparksDateClick("sparks_star_0")
+        sparksDateClick("sparks_selected_date")
+        sparksDateClick("open_planner")
+    }
+
     private fun tapOutsideDetail() {
         scenario.onActivity {
             val dialog = checkNotNull(ShadowDialog.getLatestDialog())
@@ -317,9 +328,8 @@ class StarLiveUiTest {
         val body = "读完一章，记下喜欢的一句话。"
         scenario.onActivity { activity ->
             val repository = ViewModelProvider(activity)[PlanViewModel::class.java].repository
-            repository.addDraftItem(monday.toString(), 0, completed, "阅读", body)
-            repository.addDraftItem(monday.toString(), 0, unfinished, "运动")
-            repository.confirmDraft(monday.toString())
+            repository.addPlan(monday.toString(), 0, completed, "阅读", body)
+            repository.addPlan(monday.toString(), 0, unfinished, "运动", "")
         }
         selectMonday()
         compose.waitUntil(10_000) { textExists(completed) && textExists(unfinished) }
@@ -396,7 +406,7 @@ class StarLiveUiTest {
 
     // Robolectric #8460 affects both dialogs that contain a text field.
     @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
-    @Test fun ideasOpenInDetailAndAddTheirBodyOnlyToDraft() {
+    @Test fun ideasOpenInDetailAndAddTheirBodyDirectlyToPlans() {
         val title = "给房间一个小小整理"
         val body = "从桌面开始。\n把不用的东西放回原处。"
         val targetWeek = PlanEngine.weekKey(LocalDate.now().plusWeeks(4))
@@ -427,17 +437,21 @@ class StarLiveUiTest {
         screenshot("09-idea-detail.png", dialog = true)
         add.performClick()
         compose.waitUntil(5_000) { !exists("idea_detail") }
-        awaitRepository("The selected idea and its body did not persist as a draft") {
+        awaitRepository("The selected idea and its body did not persist as a plan") {
             var added = false
             scenario.onActivity { activity ->
                 val data = ViewModelProvider(activity)[PlanViewModel::class.java].data!!
-                assertTrue("Adding an idea confirmed the plan", data.weeks.isEmpty())
-                added = data.drafts[targetWeek]?.days?.get(targetDay)?.any {
+                assertTrue("Adding an idea created a draft", data.drafts.isEmpty())
+                added = data.weeks[targetWeek]?.days?.get(targetDay)?.any {
                     it.title == title && it.body == body
                 } == true
             }
             added
         }
+        sparksDateClick("sparks_selected_date")
+        compose.onNodeWithTag("sparks_configured_plans", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText(title).assertIsDisplayed()
+        compose.onNodeWithText(body).assertIsDisplayed()
     }
 
     // The custom plan editor contains text fields, so use the same Robolectric width workaround.
@@ -465,12 +479,12 @@ class StarLiveUiTest {
         compose.onNodeWithTag("plan_category_picker", useUnmergedTree = true).assertDoesNotExist()
         compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(title)) }
-        compose.onNodeWithText("保存到草稿").performClick()
-        awaitRepository("The custom plan did not land in next Sunday's draft") {
+        compose.onNodeWithTag("plan_editor_save", useUnmergedTree = true).performClick()
+        awaitRepository("The custom plan did not land in next Sunday's plans") {
             var added = false
             scenario.onActivity { activity ->
                 val data = checkNotNull(ViewModelProvider(activity)[PlanViewModel::class.java].data)
-                added = data.drafts[nextWeek]?.days?.get(day)?.any {
+                added = data.weeks[nextWeek]?.days?.get(day)?.any {
                     it.title == title && it.category == category
                 } == true
             }
@@ -517,15 +531,143 @@ class StarLiveUiTest {
         assertEquals(homeFocusedSky, bounds("sparks_sky_background"))
     }
 
+    @Test fun focusedSparksStarSwitchesBetweenRecommendationsAndPlansForItsDate() {
+        val week = PlanEngine.weekKey(LocalDate.now().plusWeeks(4))
+        val selectedDay = 2
+        val date = LocalDate.parse(week).plusDays(selectedDay.toLong())
+        val targetTitle = "只在选中的星期三读书"
+        val neighboringTitle = "隔天的计划"
+        scenario.onActivity { activity ->
+            val repository = ViewModelProvider(activity)[PlanViewModel::class.java].repository
+            repository.addPlan(week, selectedDay, targetTitle, "阅读", "")
+            repository.addPlan(week, selectedDay + 1, neighboringTitle, "阅读", "")
+        }
+        awaitRepository("The future plans did not load") {
+            var loaded = false
+            scenario.onActivity { activity ->
+                loaded = ViewModelProvider(activity)[PlanViewModel::class.java].data?.weeks?.get(week)
+                    ?.days?.get(selectedDay + 1)?.any { it.title == neighboringTitle } == true
+            }
+            loaded
+        }
+
+        compose.onNodeWithTag("nav_ideas").performClick()
+        chooseSparksWeek(week)
+        sparksDateClick("sparks_star_$selectedDay")
+        val configured = compose.onNodeWithTag("sparks_configured_plans", useUnmergedTree = true)
+        val categories = compose.onNodeWithTag("idea_categories", useUnmergedTree = true)
+        val custom = compose.onNodeWithTag("idea_custom", useUnmergedTree = true)
+        val hint = compose.onNodeWithTag("sparks_focus_hint", useUnmergedTree = true).assertIsDisplayed()
+        val picker = compose.onNodeWithTag("sparks_week_picker", useUnmergedTree = true)
+        hint.assertTextEquals("点击星星，查看当天计划")
+        picker.assertDoesNotExist()
+        custom.assertIsDisplayed()
+        configured.assertDoesNotExist()
+        sparksDateClick("sparks_selected_date")
+        configured.assertIsDisplayed()
+        picker.assertIsDisplayed()
+        hint.assertTextEquals("点击星星，返回备选计划")
+        categories.assertDoesNotExist()
+        custom.assertDoesNotExist()
+        compose.onNodeWithTag("sparks_configured_date", useUnmergedTree = true)
+            .assertTextContains("${date.monthValue} 月 ${date.dayOfMonth} 日", substring = true)
+        compose.onNodeWithText(targetTitle).assertIsDisplayed()
+        compose.onNodeWithText(neighboringTitle).assertDoesNotExist()
+        compose.onNodeWithTag("open_planner", useUnmergedTree = true).assertDoesNotExist()
+
+        sparksDateClick("sparks_selected_date")
+        custom.assertIsDisplayed()
+        configured.assertDoesNotExist()
+        tapBlankSparksSky()
+        chooseSparksWeek(PlanEngine.weekKey(LocalDate.now()))
+        sparksDateClick("sparks_star_$selectedDay")
+        sparksDateClick("sparks_selected_date")
+        compose.onNodeWithTag("sparks_configured_empty", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("open_planner", useUnmergedTree = true).assertExists()
+        chooseSparksWeek(week)
+        configured.assertDoesNotExist()
+        sparksDateClick("sparks_star_$selectedDay")
+        custom.assertIsDisplayed()
+    }
+
+    // The edit dialog's text fields need the same Robolectric width workaround as the add dialog.
+    @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
+    @Test fun configuredSparksPlanCanBeEditedAndDeletedInPlace() {
+        val week = PlanEngine.weekKey(LocalDate.now())
+        val original = "留一段时间阅读"
+        val updated = "读完这一章"
+        val body = "从上次的书签继续读。"
+        scenario.onActivity { activity ->
+            ViewModelProvider(activity)[PlanViewModel::class.java].repository.addPlan(week, 0, original, "阅读", "")
+        }
+        awaitRepository("The plan did not load") {
+            var loaded = false
+            scenario.onActivity { activity ->
+                loaded = ViewModelProvider(activity)[PlanViewModel::class.java].data?.weeks?.get(week)
+                    ?.days?.get(0)?.any { it.title == original } == true
+            }
+            loaded
+        }
+        val id = mondayItemId(week, original)
+        compose.onNodeWithTag("nav_ideas").performClick()
+        sparksDateClick("sparks_star_0")
+        sparksDateClick("sparks_selected_date")
+        val row = compose.onNodeWithTag("sparks_plan_$id", useUnmergedTree = true)
+        row.assertIsDisplayed().performClick()
+        val editor = compose.onNodeWithTag("plan_editor", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasSetTextAction() and !hasTestTag("plan_body"), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(updated)) }
+        compose.onNodeWithTag("plan_body", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(body)) }
+        compose.onNodeWithTag("plan_editor_save", useUnmergedTree = true).performClick()
+        editor.assertDoesNotExist()
+        compose.waitUntil(10_000) { textExists(updated) && !textExists(original) }
+        compose.onNodeWithText(body).assertIsDisplayed()
+        row.assertIsDisplayed().performClick()
+        compose.onNodeWithTag("plan_editor_delete", useUnmergedTree = true).performClick()
+        val confirm = compose.onNodeWithTag("plan_delete_confirm", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("保留").performClick()
+        editor.assertIsDisplayed()
+        compose.onNodeWithTag("plan_editor_delete", useUnmergedTree = true).performClick()
+        confirm.assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) { !exists("sparks_plan_$id") }
+        compose.onNodeWithTag("sparks_configured_empty", useUnmergedTree = true).assertIsDisplayed()
+        selectMonday()
+        planCard(id).assertDoesNotExist()
+    }
+
+    @Test fun withinUsesItsOwnStarsAndTheGlobalMusicControl() {
+        compose.onNodeWithTag("open_planner", useUnmergedTree = true).assertDoesNotExist()
+        val music = compose.onNodeWithTag("music_toggle", useUnmergedTree = true)
+        music.assertIsDisplayed().assertHasClickAction().assertContentDescriptionContains("播放背景音乐")
+        val indicator = compose.onNodeWithTag("music_playing_indicator", useUnmergedTree = true)
+        indicator.assertDoesNotExist()
+        goOverview()
+        compose.onNodeWithTag("star_0", useUnmergedTree = true).assertIsDisplayed()
+        val ability = compose.onNodeWithTag("nav_ability")
+        ability.assertIsDisplayed().performClick().assertIsSelected()
+        val content = compose.onNodeWithTag("within_essays", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("within_gemini_sky", useUnmergedTree = true)
+            .assertIsDisplayed().assertHasNoClickAction()
+        compose.onNodeWithTag("star_0", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("within_star_SELF", useUnmergedTree = true)
+            .assertHasClickAction().performClick()
+        compose.onNodeWithTag("within_focused_star", useUnmergedTree = true).assertIsDisplayed()
+        music.assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("nav_space").performClick().assertIsSelected()
+        content.assertDoesNotExist()
+        compose.onNodeWithTag("nav_stars").performClick().assertIsSelected()
+        compose.onNodeWithTag("star_0", useUnmergedTree = true).assertIsDisplayed()
+    }
+
     // Robolectric #8460: >320dp Dialog + TextField can loop in layout. Keep the
     // product untouched; this editor flow uses 320dp, other visual cases use 360dp.
     @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
-    @Test fun draftConfirmationAndCompletionSurviveActivityRecreationAndReload() {
+    @Test fun weeklyEditorSavesImmediatelyAndHomeCompletionPersistsAfterReload() {
         val week = PlanEngine.weekKey(LocalDate.now())
         val title = "读十页书，让今天慢一点"
         val body = "把手机放在旁边，翻开书。"
-        selectMonday()
-        compose.onNodeWithTag("open_planner").performClick()
+        openMondayPlannerFromSparks()
         contentClick("planner_add")
         // Exercise the real TextField onValueChange without Robolectric's virtual
         // IME/focus loop. Physical keyboard behavior remains a device-test item.
@@ -534,19 +676,18 @@ class StarLiveUiTest {
         compose.onNodeWithTag("plan_body", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(body)) }
         compose.onNodeWithText("阅读").performScrollTo().performClick()
-        compose.onNodeWithText("保存到草稿").performClick()
+        compose.onNodeWithTag("plan_editor_save", useUnmergedTree = true).performClick()
         compose.waitUntil(10_000) { textExists(title) }
         scenario.onActivity {
             val data = ViewModelProvider(it)[PlanViewModel::class.java].data!!
-            assertTrue("Editing a draft must not confirm it", data.weeks.isEmpty())
+            assertTrue("Saving a plan should populate the selected day immediately",
+                data.weeks[week]?.days?.get(0)?.any { it.title == title && it.body == body } == true)
+            assertTrue(data.drafts.isEmpty())
         }
-        compose.onNodeWithTag("nav_stars").performClick()
-        compose.onAllNodesWithText(title).assertCountEquals(0)
-        compose.onNodeWithTag("open_planner").performClick()
         compose.onNodeWithText(title).performScrollTo()
         screenshot("07-planner.png")
-        contentClick("planner_confirm")
-        compose.onNodeWithTag("planner_confirm_dialog", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("planner_confirm", useUnmergedTree = true).assertDoesNotExist()
+        selectMonday()
         compose.waitUntil(10_000) { textExists(title) && exists("day_panel") }
         val id = mondayItemId(week, title)
         val card = planCard(id).performScrollTo()
@@ -570,8 +711,8 @@ class StarLiveUiTest {
         val today = LocalDate.now()
         val key = PlanEngine.weekKey(today)
         val engine = PlanEngine(today)
-        val draft = engine.addDraftItem(AppState.empty(), key, 0, "备份中的一页书", "阅读")
-        val json = BackupCodec.encode(engine.confirmDraft(draft, key))
+        val saved = engine.addPlan(AppState.empty(), key, 0, "备份中的一页书", "阅读", "")
+        val json = BackupCodec.encode(saved)
         compose.onNodeWithTag("nav_space").performClick()
         scenario.onActivity { activity ->
             val model = ViewModelProvider(activity)[PlanViewModel::class.java]
