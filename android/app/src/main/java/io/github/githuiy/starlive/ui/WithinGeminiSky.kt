@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.absoluteOffset
@@ -17,6 +18,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -32,15 +34,19 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.githuiy.starlive.data.WithinCategory
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private enum class GeminiLabelSide { Above, Left, Right, Below }
@@ -48,14 +54,13 @@ private enum class GeminiLabelSide { Above, Left, Right, Below }
 private data class GeminiPoint(
     val reference: Offset,
     val category: WithinCategory? = null,
-    val labelSide: GeminiLabelSide = GeminiLabelSide.Below,
-    val warm: Boolean = false
+    val labelSide: GeminiLabelSide = GeminiLabelSide.Below
 )
 
 // Trace the points and connections from the supplied illustration. The two
 // figures themselves are never drawn.
 private val GeminiPoints = listOf(
-    GeminiPoint(Offset(386f, 132f), WithinCategory.SELF, GeminiLabelSide.Above, warm = true),
+    GeminiPoint(Offset(386f, 132f), WithinCategory.SELF, GeminiLabelSide.Above),
     GeminiPoint(Offset(327f, 170f)),
     GeminiPoint(Offset(394f, 174f)),
     GeminiPoint(Offset(437f, 192f)),
@@ -64,7 +69,7 @@ private val GeminiPoints = listOf(
     GeminiPoint(Offset(385f, 350f)),
     GeminiPoint(Offset(322f, 505f), WithinCategory.FOOTPRINT),
     GeminiPoint(Offset(403f, 485f)),
-    GeminiPoint(Offset(480f, 120f), WithinCategory.WORLD, GeminiLabelSide.Above, warm = true),
+    GeminiPoint(Offset(480f, 120f), WithinCategory.WORLD, GeminiLabelSide.Above),
     GeminiPoint(Offset(519f, 211f)),
     GeminiPoint(Offset(629f, 217f)),
     GeminiPoint(Offset(517f, 355f), WithinCategory.ECHO, GeminiLabelSide.Right),
@@ -75,19 +80,21 @@ private val GeminiPoints = listOf(
 )
 private val GeminiOrigin = Offset(276f, 120f)
 private val GeminiSpan = Offset(353f, 385f)
-private val GeminiLines = listOf(
+private val GeminiEdges = listOf(
     listOf(0, 2, 3, 10, 11),
     listOf(1, 2, 4, 5, 7),
     listOf(4, 6, 8),
     listOf(9, 10, 12, 13),
     listOf(12, 14, 15, 16)
-)
+).flatMap { it.zipWithNext() }
 private val GeminiEntries = GeminiPoints.indices.filter { GeminiPoints[it].category != null }
+private const val GeminiFocusZoom = 2.75f
 
 @Composable
 internal fun WithinGeminiSky(
     selected: WithinCategory?,
     onSelect: (WithinCategory) -> Unit,
+    onOverview: () -> Unit,
     reduceMotion: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -102,6 +109,7 @@ internal fun WithinGeminiSky(
         it.category != null && it.category == (selected ?: lastSelection)
     }
     val canSelect by remember { derivedStateOf { focusProgress.value <= .02f } }
+    val returnToOverview by rememberUpdatedState(onOverview)
     val plotDensity = LocalDensity.current
     val labelSize = with(plotDensity) { 13.sp.toPx() }
     val focusLabelSize = with(plotDensity) { 22.sp.toPx() }
@@ -153,45 +161,43 @@ internal fun WithinGeminiSky(
         val selectedLabel = if (selected != null) {
             Modifier.testTag("within_focused_star").semantics { contentDescription = selected.label }
         } else Modifier
+        val center = Offset(width * .5f, height * .43f)
+        val focusedLabelCenter = center + with(plotDensity) { Offset(0f, 35.dp.toPx()) }
         Canvas(Modifier.matchParentSize().then(selectedLabel)) {
             val progress = if (focusIndex < 0) 0f else focusProgress.value
             val transparency = 1f - progress
             val otherOpacity = transparency * transparency
-            val center = Offset(size.width * .5f, size.height * .43f)
             val selectedPoint = points.getOrElse(focusIndex) { center }
             val focusedPoint = lerp(selectedPoint, center, progress)
+            val zoom = 1f + (GeminiFocusZoom - 1f) * progress
             val positions = points.map { point ->
-                focusedPoint + (point - selectedPoint) * (1f + .18f * progress)
+                focusedPoint + (point - selectedPoint) * zoom
             }
-            if (otherOpacity > 0f) {
-                val path = Path().apply {
-                    GeminiLines.forEach { indices ->
-                        val start = positions[indices.first()]
-                        moveTo(start.x, start.y)
-                        indices.drop(1).forEach { lineTo(positions[it].x, positions[it].y) }
-                    }
-                }
-                drawPath(
-                    path,
-                    Brush.linearGradient(
-                        listOf(Color(0xFFABC8E8).copy(alpha = .48f), Color(0xFFB4D8ED).copy(alpha = .66f),
-                            Color(0xFFC1CCDE).copy(alpha = .51f)),
-                        start = Offset(size.width * .18f, 0f),
-                        end = Offset(size.width * .82f, size.height)
-                    ),
-                    alpha = otherOpacity,
-                    style = Stroke(1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
+            val focusedLines = Path()
+            val remainingLines = Path()
+            GeminiEdges.forEach { (from, to) ->
+                val line = if (progress > 0f && (from == focusIndex || to == focusIndex)) focusedLines else remainingLines
+                line.moveTo(positions[from].x, positions[from].y)
+                line.lineTo(positions[to].x, positions[to].y)
             }
+            val lineBrush = Brush.linearGradient(
+                listOf(Color(0xFFABC8E8).copy(alpha = .48f), Color(0xFFB4D8ED).copy(alpha = .66f),
+                    Color(0xFFC1CCDE).copy(alpha = .51f)),
+                start = Offset(size.width * .18f, 0f),
+                end = Offset(size.width * .82f, size.height)
+            )
+            val stroke = Stroke(1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            if (otherOpacity > 0f) drawPath(remainingLines, lineBrush, alpha = otherOpacity, style = stroke)
+            if (progress > 0f) drawPath(focusedLines, lineBrush, alpha = 1f - .3f * progress, style = stroke)
             GeminiPoints.forEachIndexed { index, point ->
                 val primary = point.category != null
                 val opacity = if (index == focusIndex) 1f else otherOpacity
                 if (opacity > 0f) {
-                    val zoom = if (index == focusIndex) 1f + 1.18f * progress else 1f
-                    val scale = (if (primary) .19.dp else .115.dp).toPx() * zoom
+                    val starZoom = if (index == focusIndex) zoom else 1f
+                    val scale = (if (primary) .19.dp else .115.dp).toPx() * starZoom
                     val light = if (primary) .42f else .13f
-                    drawLandingHalo(positions[index], scale, light, point.warm, opacity)
-                    drawLandingStar(positions[index], scale, light, point.warm, opacity)
+                    drawLandingHalo(positions[index], scale, light, warm = primary, opacity = opacity)
+                    drawLandingStar(positions[index], scale, light, warm = primary, opacity = opacity)
                 }
             }
             val canvas = drawContext.canvas.nativeCanvas
@@ -202,7 +208,7 @@ internal fun WithinGeminiSky(
                     val label = checkNotNull(GeminiPoints[index].category).label
                     val originalCenter = bounds.center + positions[index] - points[index]
                     val labelCenter = if (index == focusIndex) {
-                        lerp(bounds.center, center + Offset(0f, 35.dp.toPx()), focus)
+                        lerp(bounds.center, focusedLabelCenter, focus)
                     } else originalCenter
                     drawPaint.textSize = labelSize + (focusLabelSize - labelSize) * focus
                     drawPaint.color = lerpColor(Ink, Gold, focus * .65f).copy(alpha = opacity).toArgb()
@@ -211,6 +217,30 @@ internal fun WithinGeminiSky(
                         labelCenter.y - (drawPaint.ascent() + drawPaint.descent()) / 2, drawPaint)
                 }
             }
+        }
+        if (selected != null && focusIndex >= 0) {
+            val starOrigin = points[focusIndex]
+            val label = labels.getValue(focusIndex)
+            Box(Modifier.matchParentSize().testTag("within_sky_background")
+                .semantics {
+                    role = Role.Button
+                    onClick(label = "返回完整星图") {
+                        returnToOverview()
+                        true
+                    }
+                }
+                .pointerInput(starOrigin, center, label, focusedLabelCenter, focusLabelSize) {
+                    detectTapGestures { tap ->
+                        val progress = focusProgress.value
+                        val star = lerp(starOrigin, center, progress)
+                        val labelCenter = lerp(label.center, focusedLabelCenter, progress)
+                        val textScale = 1f + (focusLabelSize / labelSize - 1f) * progress
+                        val labelPadding = 6.dp.toPx()
+                        val atLabel = abs(tap.x - labelCenter.x) <= label.width * textScale / 2 + labelPadding &&
+                            abs(tap.y - labelCenter.y) <= label.height * textScale / 2 + labelPadding
+                        if (!atLabel && (tap - star).getDistance() > 28.dp.toPx()) returnToOverview()
+                    }
+                })
         }
         if (selected == null && canSelect) {
             GeminiEntries.forEach { index ->

@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 
 private const val PlanRevealMillis = 260
 private val PlanRevealEasing = CubicBezierEasing(.42f, 0f, .58f, 1f)
+internal val PlanTileShape = RoundedCornerShape(15.dp)
 
 internal class PlanRevealState(private val scope: CoroutineScope, private val reduceMotion: Boolean) {
     private val animation = Animatable(0f)
@@ -104,7 +105,7 @@ internal fun PlanTile(title: String, category: String, modifier: Modifier = Modi
     val tint = categoryColor(category)
     val border = if (filledCategory) tint.copy(alpha = .46f) else if (done == true) Gold.copy(alpha = .32f) else Line
     Surface(color = if (filledCategory) lerp(Night, tint, .25f).copy(alpha = .80f) else containerColor,
-        shape = RoundedCornerShape(15.dp),
+        shape = PlanTileShape,
         border = BorderStroke(1.dp, border),
         modifier = modifier) {
         Box {

@@ -77,7 +77,7 @@ fun WeekStarMap(
     reduceMotion: Boolean, onDay: (Int) -> Unit, onOverview: () -> Unit,
     modifier: Modifier = Modifier,
     companions: List<PlanItem> = emptyList(), focusedCompanionId: String? = null,
-    onCompanion: (PlanItem) -> Unit = {}, onPrimaryBounds: (Rect?) -> Unit = {},
+    onCompanion: ((PlanItem) -> Unit)? = null, onPrimaryBounds: (Rect?) -> Unit = {},
     highlightPrimary: Boolean = false, interactive: Boolean = true,
     backgroundTag: String = "sky_background", primaryTag: String = "primary_star",
     primaryDescription: String? = null, primaryClickLabel: String? = null, primaryActionEnabled: Boolean = true
@@ -236,9 +236,12 @@ fun WeekStarMap(
                 }.size(48.dp).then(dropBounds).testTag(if (overview) "star_$index" else primaryTag).semantics {
                     contentDescription = primaryDescription ?:
                         "${ShortWeekdays[index]} · ${StarNames[index]}${if (index == todayIndex) "，今天" else ""}，完成${(ratios.getOrElse(index) { 0f } * 100).roundToInt()}%"
-                }.then(if (overview || primaryActionEnabled) {
-                    Modifier.clickable(role = Role.Button, onClickLabel = if (overview) null else primaryClickLabel) { onDay(index) }
-                } else Modifier))
+                }.then(when {
+                    overview -> Modifier.clickable(role = Role.Button) { onDay(index) }
+                    primaryActionEnabled -> Modifier.clickable(interactionSource = null, indication = null,
+                        role = Role.Button, onClickLabel = primaryClickLabel) { onDay(index) }
+                    else -> Modifier
+                }))
             }
         }
         visibleCompanions.forEachIndexed { slot, item ->
@@ -250,8 +253,10 @@ fun WeekStarMap(
                 }.size(48.dp).testTag("companion_${item.id}").semantics {
                     contentDescription = item.title
                     stateDescription = "已完成"
-                }.clickable(interactionSource = null, indication = null, role = Role.Button,
-                    onClick = { onCompanion(item) }))
+                }.then(if (onCompanion != null) {
+                    Modifier.clickable(interactionSource = null, indication = null, role = Role.Button,
+                        onClick = { onCompanion(item) })
+                } else Modifier))
             }
         }
         if (interactive && !overview && focusedIndex < 0) {

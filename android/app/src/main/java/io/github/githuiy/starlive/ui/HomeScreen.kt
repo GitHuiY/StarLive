@@ -94,7 +94,7 @@ internal fun HomeDaySky(
     onDay: (Int) -> Unit, onOverview: () -> Unit, modifier: Modifier = Modifier,
     externalOverview: Boolean = true, focusProgress: Float = if (overview) 0f else 1f,
     overviewDate: String? = null, companions: List<PlanItem> = emptyList(),
-    focusedCompanionId: String? = null, onCompanion: (PlanItem) -> Unit = {},
+    focusedCompanionId: String? = null, onCompanion: ((PlanItem) -> Unit)? = null,
     onPrimaryBounds: (Rect?) -> Unit = {}, highlightPrimary: Boolean = false,
     onWeekdayAnchor: (Offset) -> Unit = {}, onStarNameAnchor: (Offset) -> Unit = {},
     backgroundTag: String = "sky_background", primaryTag: String = "primary_star",

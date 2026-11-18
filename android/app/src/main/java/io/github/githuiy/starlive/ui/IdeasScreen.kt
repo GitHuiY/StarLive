@@ -387,7 +387,8 @@ private fun SparksRecommendations(ideas: List<LifeIdea>, category: String, onCat
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { (index, idea) ->
                         PlanTile(idea.title, idea.category, Modifier.weight(1f).fillMaxHeight()
-                            .testTag("idea_card_$index").clickable(enabled = enabled, role = Role.Button) {
+                            .testTag("idea_card_$index").clip(PlanTileShape)
+                            .clickable(enabled = enabled, role = Role.Button) {
                                 onIdea(index, idea)
                             }, filledCategory = true, flash = { reveal.progress(index.toString()) })
                     }

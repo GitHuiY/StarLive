@@ -81,13 +81,19 @@ internal class BackgroundMusic(private val context: Context, private val isForeg
         if (!isForeground()) return
         playRequested = true
         try {
+            val current = player
+            val sound = if (current == null) findAudioResource() else 0
+            if (current == null && sound == 0) {
+                playRequested = false
+                onError("没有找到背景音乐文件")
+                return
+            }
             if (!acquireFocus()) {
                 playRequested = false
                 onError("暂时无法播放背景音乐，请稍后重试")
                 return
             }
-            val current = player
-            if (current == null) preparePlayer() else if (prepared) start(current)
+            if (current == null) preparePlayer(sound) else if (prepared) start(current)
         } catch (_: IOException) {
             failPlayback()
         } catch (_: RuntimeException) {
@@ -114,14 +120,10 @@ internal class BackgroundMusic(private val context: Context, private val isForeg
     }
 
     @SuppressLint("DiscouragedApi")
-    private fun preparePlayer() {
-        // Resolve the optional audio at runtime so a build without the local track can still run.
-        val sound = context.resources.getIdentifier("river_flows_in_you", "raw", context.packageName)
-        if (sound == 0) {
-            pause()
-            onError("没有找到背景音乐文件")
-            return
-        }
+    private fun findAudioResource(): Int =
+        context.resources.getIdentifier("river_flows_in_you", "raw", context.packageName)
+
+    private fun preparePlayer(sound: Int) {
         val media = MediaPlayer()
         player = media
         media.setAudioAttributes(attributes)

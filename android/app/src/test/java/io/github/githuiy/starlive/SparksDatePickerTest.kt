@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertValueEquals
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
@@ -265,6 +266,22 @@ class SparksDatePickerTest {
         node("sparks_selected_date").performClick()
         node("sparks_plan_${future.id}").assertIsDisplayed().assertHasClickAction()
         node("sparks_plan_status_${future.id}").assertDoesNotExist()
+    }
+
+    @Test fun completedCompanionsInSparksDoNotInterceptTheSkyReturn() {
+        val today = LocalDate.of(2026, 11, 18)
+        val completed = PlanItem("spark-completed", "读完一章", "阅读", true)
+        val plans = WeekPlan(List(7) { if (it == 0) listOf(completed) else emptyList() })
+        renderSparks(today, Modifier.fillMaxSize(), weeks = mapOf(mondayOf(today) to plans))
+
+        node("sparks_star_0").performClick()
+        val companion = node("companion_${completed.id}").assertIsDisplayed().assertHasNoClickAction()
+        companion.assertContentDescriptionContains(completed.title).assertValueEquals("已完成")
+        val position = companion.fetchSemanticsNode().boundsInRoot.center
+        val sky = node("sparks_sky_background")
+        val origin = sky.fetchSemanticsNode().boundsInRoot.topLeft
+        sky.performTouchInput { click(position - origin) }
+        node("sparks_star_0").assertIsDisplayed()
     }
 
     @Config(qualifiers = "zh-rCN-w800dp-h360dp-land-xxxhdpi")

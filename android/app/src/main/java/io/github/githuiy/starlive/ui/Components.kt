@@ -63,10 +63,12 @@ fun categoryColor(category: String): Color = when (category) {
 fun mondayOf(date: LocalDate): LocalDate = date.minusDays((date.dayOfWeek.value - 1).toLong())
 fun weekRange(monday: LocalDate): String = "${monday.format(DateTimeFormatter.ofPattern("M.d"))} — ${monday.plusDays(6).format(DateTimeFormatter.ofPattern("M.d"))}"
 
+internal val SkyCardShape = RoundedCornerShape(22.dp)
+
 @Composable
 fun SkyCard(modifier: Modifier = Modifier, containerColor: Color = Panel.copy(alpha = .88f),
     content: @Composable ColumnScope.() -> Unit) {
-    Card(modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
+    Card(modifier.fillMaxWidth(), shape = SkyCardShape,
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(1.dp, Line.copy(alpha = .65f))) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)

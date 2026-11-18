@@ -1,10 +1,17 @@
 package io.github.githuiy.starlive
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.net.Uri
 import android.provider.Settings
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -12,30 +19,44 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import io.github.githuiy.starlive.data.WithinFontFamily
+import io.github.githuiy.starlive.data.WithinRepository
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
@@ -68,11 +89,15 @@ class WithinUiTest {
             assertTrue("star $name must stay above the bottom navigation", bounds.bottom <= nav.top)
             star.performClick()
             node("within_focused_star").assertIsDisplayed()
+            node("within_all_stars").assertDoesNotExist()
             listNode("within_list_title").assertTextContains(label)
             listNode("within_empty").assertIsDisplayed()
-            listNode("within_all_stars").performClick()
-            listNode("within_list_title").assertTextContains("全部随笔")
+            selectAll()
         }
+        selectStar("SELF")
+        pressBack()
+        node("within_focused_star").assertDoesNotExist()
+        listNode("within_list_title").assertTextContains("全部随笔")
         node("star_0").assertDoesNotExist()
         node("music_toggle").assertIsDisplayed()
     }
@@ -94,7 +119,9 @@ class WithinUiTest {
         openWithin()
         add()
         node("within_editor_save").assertIsNotEnabled()
+        node("within_editor_open_categories").performClick()
         node("within_editor_category_SELF").reveal().assertIsNotSelected()
+        node("within_editor_apply_categories").performClick()
         editorText("body", "验收 · 无分类")
         node("within_editor_save").performClick()
         waitForEditorToClose()
@@ -103,13 +130,18 @@ class WithinUiTest {
         selectStar("WORLD")
         listNode("within_empty").assertIsDisplayed()
         add()
+        node("within_editor_open_categories").performClick()
         node("within_editor_category_WORLD").reveal().assertIsSelected()
         node("within_editor_category_MOMENT").reveal().performClick().assertIsSelected()
+        node("within_editor_apply_categories").performClick()
         editorText("body", "验收 · 两个分类")
+        node("within_editor_open_date").performClick()
         editorText("date", "2026-02-30")
-        node("within_editor_save").performClick()
+        node("within_editor_apply_date").performClick()
         node("within_editor_date_error").reveal().assertIsDisplayed()
         editorText("date", "2026-11-15")
+        node("within_editor_apply_date").performClick()
+        node("within_editor_date").assertDoesNotExist()
         node("within_editor_save").performClick()
         waitForEditorToClose()
         preview("验收 · 两个分类").assertIsDisplayed()
@@ -118,6 +150,7 @@ class WithinUiTest {
         selectStar("MOMENT")
         openEssay("验收 · 两个分类")
         node("within_essay_body").assertTextContains("验收 · 两个分类")
+        compose.onNodeWithText("2026-11-15").assertIsDisplayed()
         node("within_edit").performClick()
         editorText("body", "验收 · 放弃的修改")
         node("within_editor_cancel").performClick()
@@ -126,7 +159,9 @@ class WithinUiTest {
         node("within_essay_body").assertTextContains("验收 · 两个分类")
 
         node("within_edit").performClick()
+        node("within_editor_open_categories").performClick()
         node("within_editor_category_WORLD").reveal().assertIsSelected().performClick().assertIsNotSelected()
+        node("within_editor_apply_categories").performClick()
         editorText("body", "验收 · 已编辑")
         node("within_editor_save").performClick()
         waitForEditorToClose()
@@ -135,7 +170,7 @@ class WithinUiTest {
         selectAll()
         selectStar("WORLD")
         listNode("within_empty").assertIsDisplayed()
-        checkNotNull(scenario).onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        pressBack()
         listNode("within_list_title").assertTextContains("全部随笔")
         preview("验收 · 已编辑").assertIsDisplayed()
         compose.onAllNodesWithText("验收 · 已编辑", useUnmergedTree = true).assertCountEquals(1)
@@ -152,6 +187,151 @@ class WithinUiTest {
         compose.waitUntil(10_000) { !hasTag("within_reader") }
         preview("验收 · 无分类").assertIsDisplayed()
         compose.onAllNodesWithText("验收 · 已编辑", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test fun essayFormattingPreservesSelectiveStylesWhenAnotherPropertyChangesForAllText() {
+        openWithin()
+        add()
+        val text = "星空第一行\n这是第二行"
+        editorText("body", text)
+        val selectionEnd = text.indexOf('\n')
+        selectBody(0, selectionEnd)
+        formatTool("within_format_font").performClick()
+        node("within_font_SERIF").performClick()
+        formatTool("within_format_size").performClick()
+        node("within_size_24").performClick()
+        formatTool("within_format_color").performClick()
+        node("within_color_1").performClick()
+        formatTool("within_format_bold").performClick()
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val before = runBlocking { repository.load().single().draft.spans.single() }
+        assertEquals(0, before.start)
+        assertEquals(selectionEnd, before.end)
+        assertEquals(0xFFDFC38D.toInt(), before.style.colorArgb)
+
+        openEssay(text)
+        node("within_edit").performClick()
+        selectBody(text.length, text.length)
+        formatTool("within_format_color").performClick()
+        node("within_color_2").performClick()
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val draft = runBlocking { repository.load().single().draft }
+        assertEquals(2, draft.spans.size)
+        val (selected, remaining) = draft.spans
+        assertEquals(text, draft.body)
+        assertEquals(0, selected.start)
+        assertEquals(selectionEnd, selected.end)
+        assertEquals(WithinFontFamily.SERIF, selected.style.fontFamily)
+        assertEquals(24, selected.style.fontSizeSp)
+        assertTrue(selected.style.bold)
+        assertEquals(selectionEnd, remaining.start)
+        assertEquals(text.length, remaining.end)
+        assertFalse(remaining.style.bold)
+        assertNull(remaining.style.fontFamily)
+        assertNull(remaining.style.fontSizeSp)
+        assertEquals(0xFFB9DEFF.toInt(), selected.style.colorArgb)
+        assertEquals(selected.style.colorArgb, remaining.style.colorArgb)
+        node("within_essay_body").assertTextContains(text)
+    }
+
+    @Test fun immersiveWriterKeepsControlsFixedAndConfirmsDiscardForSystemBack() {
+        openWithin()
+        add()
+        node("nav_ability").assertDoesNotExist()
+        node("music_toggle").assertDoesNotExist()
+        val controls = listOf("within_editor_cancel", "within_editor_save",
+            "within_editor_format_tools", "within_editor_image_tools")
+        val initialBounds = controls.associateWith { node(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        val text = (1..55).joinToString("\n") { "第 ${it} 行 · 星空随笔" }
+        editorText("body", text)
+        selectBody(text.length - 4, text.length)
+        val body = node("within_editor_body").assertIsDisplayed()
+        assertEquals(TextRange(text.length - 4, text.length),
+            body.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange])
+        body.performTouchInput { swipeDown() }
+        controls.forEach {
+            assertEquals(initialBounds.getValue(it), node(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot)
+        }
+
+        pressBack()
+        node("within_editor_discard").assertIsDisplayed()
+        compose.onNodeWithText("继续编辑").performClick()
+        body.assertTextContains(text)
+        pressBack()
+        node("within_editor_discard").performClick()
+        waitForEditorToClose()
+        listNode("within_empty").assertIsDisplayed()
+    }
+
+    @Config(sdk = [35], qualifiers = "zh-rCN-w800dp-h360dp-land-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
+    @Test fun landscapeWriterKeepsItsBodyAndToolsReachableWithLargerText() {
+        RuntimeEnvironment.setFontScale(1.6f)
+        openWithin()
+        add()
+        node("within_editor_open_date").assertIsDisplayed()
+        node("within_editor_open_categories").assertIsDisplayed()
+        node("within_editor_cancel").assertIsDisplayed()
+        node("within_editor_save").assertIsDisplayed()
+        node("within_editor_format_tools").performClick()
+        node("within_format_font").reveal().assertIsDisplayed()
+        val body = node("within_editor_body").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val toolbar = node("within_editor_toolbar").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(body.height > 0 && body.bottom <= toolbar.top)
+        node("within_editor_image_tools").performClick()
+        node("within_editor_pick_image").reveal().assertIsDisplayed()
+        node("within_editor_paste_image").reveal().assertIsDisplayed()
+    }
+
+    @Test fun clipboardImagePersistsAtTheCursorAndAppearsBetweenTextSections() {
+        openWithin()
+        add()
+        val before = "剪贴板前"
+        val after = "剪贴板后"
+        val text = before + after
+        editorText("body", text)
+        selectBody(before.length, before.length)
+        val png = ByteArrayOutputStream().use { bytes ->
+            val bitmap = Bitmap.createBitmap(160, 80, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.BLUE)
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes))
+            bytes.toByteArray()
+        }
+        val uri = Uri.parse("content://starlive-within-test/clipboard.png")
+        checkNotNull(scenario).onActivity { activity ->
+            shadowOf(activity.applicationContext.contentResolver).registerInputStreamSupplier(uri) { png.inputStream() }
+            checkNotNull(activity.getSystemService(ClipboardManager::class.java))
+                .setPrimaryClip(ClipData.newRawUri("图片", uri))
+        }
+        node("within_editor_image_tools").performClick()
+        node("within_editor_pick_image").reveal().assertIsDisplayed()
+        node("within_editor_paste_image").reveal().performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithContentDescription("图片", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val draft = runBlocking { repository.load().single().draft }
+        val image = draft.images.single()
+        assertEquals(text, draft.body)
+        assertEquals(before.length, image.offset)
+        assertEquals("image/png", image.mimeType)
+
+        openEssay(text)
+        val imageTag = "within_image_${image.id}"
+        compose.waitUntil(10_000) { hasTag(imageTag) }
+        val picture = node(imageTag).assertIsDisplayed().assertContentDescriptionContains(image.name)
+            .fetchSemanticsNode().boundsInRoot
+        val body = hasAnyAncestor(hasTestTag("within_essay_body"))
+        val preceding = compose.onNode(hasText(before) and body).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val following = compose.onNode(hasText(after) and body).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(preceding.bottom <= picture.top && picture.bottom <= following.top)
     }
 
     private fun openWithin() {
@@ -183,7 +363,12 @@ class WithinUiTest {
     }
 
     private fun selectAll() {
-        listNode("within_all_stars").performClick()
+        list().performScrollToIndex(0)
+        val sky = node("within_sky_background").assertIsDisplayed().assertHasClickAction()
+        sky.performTouchInput { click(Offset(width * .5f, height * .43f)) }
+        node("within_focused_star").assertIsDisplayed()
+        sky.performTouchInput { click(Offset(width * .06f, height * .12f)) }
+        node("within_focused_star").assertDoesNotExist()
         listNode("within_list_title").assertTextContains("全部随笔")
     }
 
@@ -202,6 +387,21 @@ class WithinUiTest {
         node("within_editor_$field").reveal().performSemanticsAction(SemanticsActions.SetText) {
             it(AnnotatedString(text))
         }
+    }
+
+    private fun selectBody(start: Int, end: Int) {
+        node("within_editor_body").reveal().performSemanticsAction(SemanticsActions.SetSelection) {
+            it(start, end, false)
+        }
+    }
+
+    private fun formatTool(tag: String): SemanticsNodeInteraction {
+        if (!hasTag(tag)) node("within_editor_format_tools").performClick()
+        return node(tag).reveal()
+    }
+
+    private fun pressBack() {
+        checkNotNull(scenario).onActivity { it.onBackPressedDispatcher.onBackPressed() }
     }
 
     private fun list() = node("within_essays")

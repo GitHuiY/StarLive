@@ -16,7 +16,9 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -46,6 +48,64 @@ class PlanRepositoryFailureTest {
         assertSame(oldSnapshot, repo.currentState.data)
         assertEquals(60, repo.currentState.data!!.settings.continuousMinutes)
         assertArrayEquals(bytes(original), storage.read(PlanSlot.PRIMARY))
+    }
+
+    @Test fun firstImportCanBeRetriedAfterPrimaryCommitFailsAndReopen() {
+        val imported = stateWithItems(1)
+        val json = BackupCodec.encode(imported)
+        val storage = FaultStorage()
+        val repo = open(storage)
+        val preview = result<BackupPreview> { repo.prepareImport(json, it) }.getOrThrow()
+        storage.failPrimaryBefore.set(1)
+
+        assertTrue(result<Unit> { repo.confirmImport(preview.token, it) }.isFailure)
+        assertNull(storage.read(PlanSlot.PRIMARY))
+        assertNotNull(storage.read(PlanSlot.STAGED))
+        repo.close()
+
+        val reopened = open(storage)
+        assertNull(reopened.currentState.error)
+        assertNull(storage.read(PlanSlot.STAGED))
+        assertNull(storage.read(PlanSlot.PREVIOUS))
+        val retry = result<BackupPreview> { reopened.prepareImport(json, it) }.getOrThrow()
+        assertTrue(result<Unit> { reopened.confirmImport(retry.token, it) }.isSuccess)
+        assertArrayEquals(bytes(imported), storage.read(PlanSlot.PRIMARY))
+        assertArrayEquals(bytes(AppState.empty()), storage.read(PlanSlot.PREVIOUS))
+        assertNull(storage.read(PlanSlot.STAGED))
+    }
+
+    @Test fun restoreWithoutPrimaryCanBeRetriedAfterCommitFails() {
+        val desired = bytes(stateWithItems(1))
+        val storage = FaultStorage()
+        storage.seed(PlanSlot.PREVIOUS, desired)
+        val repo = open(storage)
+        val preview = result<BackupPreview> { repo.prepareRestore(it) }.getOrThrow()
+        storage.failPrimaryBefore.set(1)
+
+        assertTrue(result<Unit> { repo.confirmRestore(preview.token, it) }.isFailure)
+        assertNull(storage.read(PlanSlot.PRIMARY))
+        assertArrayEquals(desired, storage.read(PlanSlot.PREVIOUS))
+
+        assertTrue(result<Unit> { repo.confirmRestore(preview.token, it) }.isSuccess)
+        assertArrayEquals(desired, storage.read(PlanSlot.PRIMARY))
+        assertArrayEquals(bytes(AppState.empty()), storage.read(PlanSlot.PREVIOUS))
+        assertNull(storage.read(PlanSlot.STAGED))
+    }
+
+    @Test fun legacyJournalWithoutPrimaryIsKeptWhenRollbackCannotBeProven() {
+        val original = bytes(AppState.empty())
+        val candidate = bytes(stateWithItems(1))
+        val digest = MessageDigest.getInstance("SHA-256").digest(candidate)
+        val legacyJournal = ByteBuffer.allocate(4 + digest.size + 4 + original.size)
+            .putInt(0x53544c31).put(digest).putInt(original.size).put(original).array()
+        val storage = FaultStorage()
+        storage.seed(PlanSlot.STAGED, legacyJournal)
+
+        val repo = open(storage)
+
+        assertTrue(repo.currentState.error!!.contains("无法自动判定"))
+        assertArrayEquals(legacyJournal, storage.read(PlanSlot.STAGED))
+        assertNull(storage.read(PlanSlot.PREVIOUS))
     }
 
     @Test fun restorePrimaryFailureDoesNotDestroyTheRequestedRestoreTarget() {
@@ -232,7 +292,7 @@ class PlanRepositoryFailureTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    private class FaultStorage(initial: AppState) : PlanStorage {
+    private class FaultStorage(initial: AppState? = null) : PlanStorage {
         private val files = ConcurrentHashMap<PlanSlot, ByteArray>()
         val rescued = CopyOnWriteArrayList<ByteArray>()
         val failPrimaryBefore = AtomicInteger()
@@ -244,7 +304,9 @@ class PlanRepositoryFailureTest {
         @Volatile var replacePrimaryAfterCommit: ByteArray? = null
         private val remainingReadFailures = AtomicInteger()
 
-        init { seed(PlanSlot.PRIMARY, BackupCodec.encode(initial).toByteArray(StandardCharsets.UTF_8)) }
+        init {
+            if (initial != null) seed(PlanSlot.PRIMARY, BackupCodec.encode(initial).toByteArray(StandardCharsets.UTF_8))
+        }
         fun seed(slot: PlanSlot, bytes: ByteArray) { files[slot] = bytes.copyOf() }
 
         override fun read(slot: PlanSlot): ByteArray? {

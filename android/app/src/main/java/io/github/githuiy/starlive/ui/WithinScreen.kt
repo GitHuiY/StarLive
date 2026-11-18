@@ -1,6 +1,12 @@
 package io.github.githuiy.starlive.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,24 +40,25 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.githuiy.starlive.data.WithinCategory
 import io.github.githuiy.starlive.data.WithinDomain
 import io.github.githuiy.starlive.data.WithinEssay
+import io.github.githuiy.starlive.data.WithinImageAttachment
 import io.github.githuiy.starlive.data.WithinRecordType
 import io.github.githuiy.starlive.data.WithinRepository
 import io.github.githuiy.starlive.data.WithinSource
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 
-private val WithinCardColor = Night.copy(alpha = .73f)
+private val WithinCardColor = Night.copy(alpha = .55f)
 
 internal val WithinCategory.label: String
     get() = when (this) {
@@ -74,19 +81,20 @@ internal val WithinCategory.description: String
     }
 
 @Composable
-internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduceMotion: Boolean) {
+internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduceMotion: Boolean,
+    readingId: String?, onReadingChange: (String?) -> Unit, editorOpen: Boolean, onEditorChange: (Boolean) -> Unit) {
     val context = LocalContext.current.applicationContext
     val repository = remember(context) { WithinRepository(context) }
     var readResult by remember { mutableStateOf<Result<List<WithinEssay>>?>(null) }
     var loadAttempt by remember { mutableIntStateOf(0) }
     var category by rememberSaveable { mutableStateOf<WithinCategory?>(null) }
-    var readingId by rememberSaveable { mutableStateOf<String?>(null) }
-    var editorOpen by rememberSaveable { mutableStateOf(false) }
     var deleteOpen by rememberSaveable { mutableStateOf(false) }
     val listScroll = rememberLazyListState()
+    val readerScroll = androidx.compose.runtime.key(readingId) { rememberLazyListState() }
     val essays = readResult?.getOrNull()
     val currentCategory = category
     val essay = essays?.firstOrNull { it.id == readingId }
+    val documentOpen = editorOpen || readingId != null
 
     LaunchedEffect(repository, loadAttempt) {
         readResult = try {
@@ -99,17 +107,17 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
     }
     LaunchedEffect(essays, readingId) {
         if (essays != null && readingId != null && essay == null) {
-            readingId = null
-            editorOpen = false
+            onReadingChange(null)
+            onEditorChange(false)
             deleteOpen = false
         }
     }
 
-    BackHandler(enabled = readingId != null || currentCategory != null) {
-        if (readingId != null) readingId = null else category = null
+    BackHandler(enabled = !editorOpen && (readingId != null || currentCategory != null)) {
+        if (readingId != null) onReadingChange(null) else category = null
     }
 
-    BoxWithConstraints(
+    if (!documentOpen) BoxWithConstraints(
         Modifier.fillMaxSize()
             .padding(contentPadding)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
@@ -120,16 +128,6 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
             .coerceAtMost((maxHeight - 6.dp).coerceAtLeast(160.dp))
         val body = Modifier.widthIn(max = 560.dp).fillMaxSize()
         val listPadding = PaddingValues(top = 4.dp, bottom = 18.dp)
-        if (readingId != null && essay != null) {
-            WithinEssayReader(
-                essay = essay,
-                onBack = { readingId = null },
-                onEdit = { editorOpen = true },
-                onDelete = { deleteOpen = true },
-                modifier = body,
-                contentPadding = listPadding,
-            )
-        } else {
             LazyColumn(
                 body.testTag("within_essays"),
                 state = listScroll,
@@ -140,6 +138,7 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
                     WithinGeminiSky(
                         selected = currentCategory,
                         onSelect = { category = it },
+                        onOverview = { category = null },
                         reduceMotion = reduceMotion,
                         modifier = Modifier.fillMaxWidth().height(skyHeight)
                     )
@@ -148,12 +147,6 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
                     item(key = "motto") {
                         Text("向内看见自己，向外遇见世界。", Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = Ink.copy(alpha = .82f))
-                    }
-                } else {
-                    item(key = "return") {
-                        TextButton(onClick = { category = null }, modifier = Modifier.testTag("within_all_stars")) {
-                            Text("‹  返回完整星图")
-                        }
                     }
                 }
                 item(key = "section") {
@@ -166,7 +159,7 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
                                 Text(it.description, color = Ink.copy(alpha = .85f), style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        Button(onClick = { editorOpen = true }, enabled = essays != null,
+                        Button(onClick = { onEditorChange(true) }, enabled = essays != null,
                             modifier = Modifier.testTag("within_add")) { Text("+  随笔") }
                     }
                 }
@@ -193,61 +186,69 @@ internal fun WithinScreen(contentPadding: PaddingValues, today: LocalDate, reduc
                     }
                     items(visible, key = { "essay-${it.id}" }) { entry ->
                         SkyCard(
-                            Modifier.testTag("within_essay_${entry.id}")
-                                .clickable(role = Role.Button) { readingId = entry.id },
+                            Modifier.testTag("within_essay_${entry.id}").clip(SkyCardShape)
+                                .clickable(role = Role.Button) { onReadingChange(entry.id) },
                             containerColor = WithinCardColor
                         ) {
                             EssayMetadata(entry)
-                            Text(entry.draft.body, color = Ink, style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            WithinEssayPreview(entry.draft)
                         }
                     }
                 }
             }
-        }
     }
 
-    if (editorOpen && essays != null && (readingId == null || essay != null)) {
-        WithinEssayEditor(initial = essay, defaultCategory = currentCategory, today = today,
-            onDismiss = { editorOpen = false }, onSave = { draft ->
-                readResult = Result.success(repository.save(essay?.id, draft))
-            })
+    AnimatedVisibility(visible = documentOpen, modifier = Modifier.fillMaxSize(),
+        enter = if (reduceMotion) EnterTransition.None else
+            slideInVertically(tween(340, easing = FastOutSlowInEasing)) { it }, exit = ExitTransition.None) {
+        when {
+            editorOpen && essays != null && (readingId == null || essay != null) -> {
+                WithinEssayEditor(initial = essay, defaultCategory = currentCategory, today = today,
+                    loadImage = repository::readImage, importImage = repository::importImage,
+                    discardImages = repository::discardUnreferencedImages,
+                    onDismiss = { onEditorChange(false) }, onSave = { draft ->
+                        readResult = Result.success(repository.save(essay?.id, draft))
+                    })
+            }
+            essay != null -> WithinEssayReader(essay, repository::readImage,
+                onBack = { onReadingChange(null) }, onEdit = { onEditorChange(true) },
+                onDelete = { deleteOpen = true }, state = readerScroll)
+            else -> WithinDocumentPage {
+                BackHandler { if (editorOpen) onEditorChange(false) else onReadingChange(null) }
+                WithinDocumentHeader("随笔", "within_reader_back", onBack = {
+                    if (editorOpen) onEditorChange(false) else onReadingChange(null)
+                }) {}
+                Text(if (readResult?.isFailure == true) "暂时读不到随笔，原文件已保留。" else "正在打开随笔…",
+                    Modifier.padding(20.dp), color = Muted)
+            }
+        }
     }
     if (deleteOpen && essay != null) {
         WithinDeleteDialog(onDismiss = { deleteOpen = false }, onDelete = {
             readResult = Result.success(repository.delete(essay.id))
-            readingId = null
+            onReadingChange(null)
         })
     }
 }
 
 @Composable
 private fun WithinEssayReader(
-    essay: WithinEssay, onBack: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit,
-    modifier: Modifier, contentPadding: PaddingValues
+    essay: WithinEssay, loadImage: suspend (WithinImageAttachment) -> ByteArray,
+    onBack: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit,
+    state: androidx.compose.foundation.lazy.LazyListState
 ) {
-    LazyColumn(modifier.testTag("within_reader"), contentPadding = contentPadding,
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            TextButton(onClick = onBack, modifier = Modifier.testTag("within_reader_back")) { Text("‹  返回随笔") }
+    WithinDocumentPage(Modifier.testTag("within_reader")) {
+        WithinDocumentHeader("随笔", "within_reader_back", onBack = onBack) {
+            TextButton(onClick = onEdit, modifier = Modifier.testTag("within_edit")) { Text("编辑", color = Gold) }
         }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = onEdit, modifier = Modifier.testTag("within_edit")) { Text("编辑随笔") }
-                TextButton(onClick = onDelete, modifier = Modifier.testTag("within_remove")) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-        item {
-            SkyCard(containerColor = WithinCardColor) {
-                EssayMetadata(essay)
-                Text(essay.draft.body, Modifier.testTag("within_essay_body"), color = Ink,
-                    style = MaterialTheme.typography.bodyLarge)
-            }
-        }
-        essay.legacy?.let { legacy ->
+        LazyColumn(Modifier.weight(1f), state = state,
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
+                EssayMetadata(essay)
+                WithinEssayContent(essay.draft, loadImage)
+            }
+            essay.legacy?.let { legacy -> item {
                 SkyCard(Modifier.testTag("within_legacy"), containerColor = WithinCardColor) {
                     Text("原画像", color = Gold, style = MaterialTheme.typography.titleMedium)
                     Text("${legacy.domain.legacyLabel} · ${legacy.type.legacyLabel}", color = Ink,
@@ -260,7 +261,10 @@ private fun WithinEssayReader(
                         Text("来源 · ${it.legacyLabel}", color = Ink, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-            }
+            } }
+        }
+        TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End).testTag("within_remove")) {
+            Text("删除随笔", color = MaterialTheme.colorScheme.error)
         }
     }
 }

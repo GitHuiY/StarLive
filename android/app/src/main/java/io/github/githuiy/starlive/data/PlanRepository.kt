@@ -21,6 +21,9 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
+private const val JOURNAL_WITH_EXISTING_PRIMARY = 0x53544c31
+private const val JOURNAL_WITH_ABSENT_PRIMARY = 0x53544c32
+
 data class RepositoryState(val data: AppState?, val loading: Boolean, val error: String?)
 data class BackupPreview(
     val token: String, val summary: BackupSummary,
@@ -208,7 +211,8 @@ class PlanRepository internal constructor(context: Context, private val storage:
         } else if (data != null) {
             // A first import also preserves the empty/current personal state for undo.
             journal = ReplacementJournal(digest(newBytes),
-                BackupCodec.encode(requireData()).toByteArray(StandardCharsets.UTF_8))
+                BackupCodec.encode(requireData()).toByteArray(StandardCharsets.UTF_8),
+                originalPrimaryPresent = false)
         }
         // Staging never replaces the current restore target. The digest identifies whether
         // primary committed, including after process death between the two file operations.
@@ -271,9 +275,14 @@ class PlanRepository internal constructor(context: Context, private val storage:
         catch (invalid: Exception) { null }
     }
 
-    private data class ReplacementJournal(val expectedDigest: ByteArray, val original: ByteArray) {
+    private data class ReplacementJournal(
+        val expectedDigest: ByteArray,
+        val original: ByteArray,
+        val originalPrimaryPresent: Boolean = true
+    ) {
         fun encode(): ByteArray = ByteBuffer.allocate(4 + 32 + 4 + original.size)
-            .putInt(0x53544c31).put(expectedDigest).putInt(original.size).put(original).array()
+            .putInt(if (originalPrimaryPresent) JOURNAL_WITH_EXISTING_PRIMARY else JOURNAL_WITH_ABSENT_PRIMARY)
+            .put(expectedDigest).putInt(original.size).put(original).array()
     }
 
     private fun committedJournal(primary: ByteArray?): ReplacementJournal? {
@@ -284,7 +293,12 @@ class PlanRepository internal constructor(context: Context, private val storage:
     private fun readJournal(): ReplacementJournal? {
         val bytes = storage.read(PlanSlot.STAGED) ?: return null
         val buffer = ByteBuffer.wrap(bytes)
-        if (bytes.size < 40 || buffer.int != 0x53544c31) throw IOException("暂存恢复点损坏，原件已保留")
+        if (bytes.size < 40) throw IOException("暂存恢复点损坏，原件已保留")
+        val originalPrimaryPresent = when (buffer.int) {
+            JOURNAL_WITH_EXISTING_PRIMARY -> true
+            JOURNAL_WITH_ABSENT_PRIMARY -> false
+            else -> throw IOException("暂存恢复点损坏，原件已保留")
+        }
         val expected = ByteArray(32)
         buffer.get(expected)
         val length = buffer.int
@@ -293,15 +307,16 @@ class PlanRepository internal constructor(context: Context, private val storage:
         }
         val original = ByteArray(length)
         buffer.get(original)
-        return ReplacementJournal(expected, original)
+        return ReplacementJournal(expected, original, originalPrimaryPresent)
     }
 
     private fun finishCommittedJournal(primary: ByteArray?): String? {
         try {
             val journal = readJournal() ?: return null
             if (primary == null || !digest(primary).contentEquals(journal.expectedDigest)) {
-                if (primary != null && primary.contentEquals(journal.original)) {
-                    // Only the exact original proves this transaction never committed.
+                val originalPrimary = journal.original.takeIf { journal.originalPrimaryPresent }
+                if (sameBytes(primary, originalPrimary)) {
+                    // Only the exact original disk state proves this transaction never committed.
                     // Remove its intent before a later write could match the old candidate.
                     storage.remove(PlanSlot.STAGED)
                     return null
@@ -316,8 +331,7 @@ class PlanRepository internal constructor(context: Context, private val storage:
             storage.remove(PlanSlot.STAGED)
             return null
         } catch (failure: Exception) {
-            // Primary is already known to be committed. Keep the journal reachable and
-            // reject ordinary edits until its restore point can be finalized on reopen.
+            // Keep the journal reachable and pause ordinary edits until recovery can finish.
             writesBlocked = true
             return "计划已读取／保存，但恢复点整理失败；原数据仍保存在暂存恢复点，已暂停编辑。${message(failure)}"
         }

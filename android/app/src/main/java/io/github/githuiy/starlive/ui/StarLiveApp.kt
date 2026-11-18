@@ -115,6 +115,9 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     val music = rememberBackgroundMusic { musicError = it }
     val scroll = rememberScrollState()
     val withinState = rememberSaveableStateHolder()
+    var withinReadingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var withinEditorOpen by rememberSaveable { mutableStateOf(false) }
+    val withinDocumentOpen = page == "ability" && (withinReadingId != null || withinEditorOpen)
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
     var introDecisionMade by rememberSaveable { mutableStateOf(false) }
@@ -261,7 +264,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
             musicError = null
         }
     }
-    BackHandler(enabled = page != "stars" || !overview || historicalWeek) {
+    BackHandler(enabled = !withinDocumentOpen && (page != "stars" || !overview || historicalWeek)) {
         introDecisionMade = true
         autoFocusToday = false
         if (page == "ideas" && sparksDay != null) {
@@ -315,12 +318,15 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                 val horizontalInsets = if (within) {
                     Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                 } else Modifier
-                Row(Modifier.fillMaxWidth().statusBarsPadding().then(horizontalInsets)
+                if (!withinDocumentOpen) Row(Modifier.fillMaxWidth().statusBarsPadding().then(horizontalInsets)
                     .padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1f).sizeIn(minHeight = 54.dp)
-                        .clickable { navigate("stars"); overview = true },
+                        .clickable(interactionSource = null, indication = null) {
+                            navigate("stars")
+                            overview = true
+                        },
                         verticalArrangement = Arrangement.Center) {
                         Text("✦  StarLive", fontFamily = FontFamily.Serif, fontSize = 23.sp, color = Ink)
                         Text("SEVEN DAYS, YOUR WAY", style = MaterialTheme.typography.labelSmall,
@@ -332,7 +338,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                 }
             },
             bottomBar = {
-                NavigationBar(
+                if (!withinDocumentOpen) NavigationBar(
                     modifier = if (homeSky || contentOverSky) Modifier.background(Brush.verticalGradient(
                         listOf(Color.Transparent, Night.copy(alpha = .62f)))) else Modifier,
                     containerColor = if (homeSky || contentOverSky) Color.Transparent else Night,
@@ -383,7 +389,9 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
                     }, onUpdate = repository::updatePlan, onDelete = repository::deletePlan)
             } else if (within) {
                 withinState.SaveableStateProvider("within") {
-                    WithinScreen(contentPadding = inner, today = today, reduceMotion = reduceMotion)
+                    WithinScreen(contentPadding = inner, today = today, reduceMotion = reduceMotion,
+                        readingId = withinReadingId, onReadingChange = { withinReadingId = it },
+                        editorOpen = withinEditorOpen, onEditorChange = { withinEditorOpen = it })
                 }
             } else Column(content.verticalScroll(scroll)
                 .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
