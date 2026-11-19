@@ -31,6 +31,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import io.github.githuiy.starlive.core.PlanItem
 import io.github.githuiy.starlive.core.WeekPlan
@@ -136,6 +137,9 @@ class SparksDatePickerTest {
         (0..6).forEach { node("sparks_star_$it").assertIsEnabled() }
         node("sparks_star_6").assertContentDescriptionContains("2027年3月28日，周日").performClick()
         node("sparks_selected_date").assertContentDescriptionContains("2027年3月28日，周日")
+        tapBlankSky()
+        swipeOverview(earlier = false)
+        assertOverviewMonday(LocalDate.of(2027, 3, 22))
         assertEquals("12.31", sparksDateLabel(today, today))
         assertEquals("+1 1.1", sparksDateLabel(today.plusDays(1), today))
         val decemberMonday = LocalDate.of(2026, 12, 28)
@@ -284,6 +288,56 @@ class SparksDatePickerTest {
         node("sparks_star_0").assertIsDisplayed()
     }
 
+    @Test fun overviewListsAllDaysOfTheSelectedWeekAndFocusShowsOnlyItsDay() {
+        val today = LocalDate.of(2026, 11, 18)
+        val monday = mondayOf(today)
+        val mondayPlan = PlanItem("monday-plan", "周初安排", "阅读", false)
+        val wednesdayPlan = PlanItem("wednesday-plan", "周中安排", "运动", false)
+        val sundayPlan = PlanItem("sunday-plan", "周末安排", "喜欢", false)
+        val lastWeekPlan = PlanItem("last-week-plan", "上周安排", "阅读", true)
+        val nextWeekPlan = PlanItem("next-week-plan", "下周安排", "运动", false)
+        val current = WeekPlan(List(7) { day ->
+            when (day) {
+                0 -> listOf(mondayPlan)
+                2 -> listOf(wednesdayPlan)
+                6 -> listOf(sundayPlan)
+                else -> listOf(PlanItem("current-$day", "当天安排 $day", "阅读", false))
+            }
+        })
+        val past = WeekPlan(List(7) { if (it == 2) listOf(lastWeekPlan) else emptyList() })
+        val future = WeekPlan(List(7) { if (it == 2) listOf(nextWeekPlan) else emptyList() })
+        renderSparks(today, Modifier.fillMaxSize(), weeks = mapOf(monday to current,
+            monday.minusWeeks(1) to past, monday.plusWeeks(1) to future))
+
+        node("sparks_week_plans").assertIsDisplayed()
+        planTitle(mondayPlan.id, "周一 · 周初安排").assertIsDisplayed()
+        node("sparks_plan_${wednesdayPlan.id}").performScrollTo().assertHasClickAction()
+        planTitle(wednesdayPlan.id, "周三 · 周中安排").assertIsDisplayed()
+        node("sparks_plan_${sundayPlan.id}").performScrollTo().assertHasClickAction()
+        planTitle(sundayPlan.id, "周日 · 周末安排").assertIsDisplayed()
+        node("sparks_week_plans").performTouchInput { swipeUp() }
+        assertOverviewMonday(monday)
+        node("sparks_star_2").performClick()
+        node("sparks_selected_date").performClick()
+        node("sparks_week_plans").assertDoesNotExist()
+        planTitle(wednesdayPlan.id, "周三 · 周中安排").assertIsDisplayed()
+        node("sparks_plan_${mondayPlan.id}").assertDoesNotExist()
+        node("sparks_plan_${sundayPlan.id}").assertDoesNotExist()
+
+        tapBlankSky()
+        swipeOverview(earlier = true)
+        node("sparks_plan_${lastWeekPlan.id}").assertIsDisplayed().assertHasNoClickAction()
+        planTitle(lastWeekPlan.id, "周三 · 上周安排").assertIsDisplayed()
+        node("sparks_plan_status_${lastWeekPlan.id}").assertTextEquals("已完成")
+        node("sparks_plan_${wednesdayPlan.id}").assertDoesNotExist()
+        swipeOverview(earlier = false)
+        assertOverviewMonday(monday)
+        swipeOverview(earlier = false)
+        node("sparks_plan_${nextWeekPlan.id}").assertIsDisplayed().assertHasClickAction()
+        planTitle(nextWeekPlan.id, "周三 · 下周安排").assertIsDisplayed()
+        node("sparks_plan_status_${nextWeekPlan.id}").assertDoesNotExist()
+    }
+
     @Config(qualifiers = "zh-rCN-w800dp-h360dp-land-xxxhdpi")
     @Test fun landscapeKeepsTheWeekChoicesAndPlansReachableInShortContent() {
         renderSparks(LocalDate.of(2026, 11, 14),
@@ -357,6 +411,9 @@ class SparksDatePickerTest {
     private fun weekLabel(tag: String, text: String) = compose.onNode(
         hasText(text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
 
+    private fun planTitle(id: String, text: String) = compose.onNode(
+        hasText(text) and hasAnyAncestor(hasTestTag("sparks_plan_$id")), useUnmergedTree = true)
+
     private fun tapBlankSky() {
         node("sparks_sky_background").assertIsDisplayed()
             .performTouchInput { click(Offset(width * .08f, height * .1f)) }
@@ -366,7 +423,7 @@ class SparksDatePickerTest {
         node("sparks_overview").assertIsDisplayed().performTouchInput {
             val left = Offset(width * .18f, height * .28f)
             val right = Offset(width * .82f, left.y)
-            if (earlier) swipe(right, left) else swipe(left, right)
+            if (earlier) swipe(left, right) else swipe(right, left)
         }
     }
 

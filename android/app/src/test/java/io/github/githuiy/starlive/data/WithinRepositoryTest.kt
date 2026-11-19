@@ -217,6 +217,52 @@ class WithinRepositoryTest {
         assertArrayEquals(unsupported, essayFile.readBytes())
     }
 
+    @Test fun paragraphListsAlignmentAndTextEffectsSurviveReopenAndUnchangedSave() = runBlocking {
+        val repository = WithinRepository(app)
+        val original = repository.save(null, WithinEssayDraft("原随笔\n  内容完整保留", olderDate)).single()
+        val rich = WithinEssayDraft("第一段\n第二段\n", newerDate,
+            spans = listOf(WithinTextSpan(0, 3, WithinTextStyle(underline = true, strikethrough = true,
+                highlight = true))),
+            paragraphs = listOf(
+                WithinParagraphStyle(0, WithinParagraphAlignment.CENTER, WithinListStyle.BULLET),
+                WithinParagraphStyle(4, WithinParagraphAlignment.END, WithinListStyle.DECIMAL),
+                WithinParagraphStyle(8, list = WithinListStyle.LETTERS)
+            ))
+        val created = repository.save(null, rich).first()
+        val savedBytes = essayFile.readBytes()
+        val reopened = WithinRepository(app)
+
+        assertEquals(listOf(created, original), reopened.load())
+        assertEquals(listOf(created, original), reopened.save(created.id, rich))
+        assertArrayEquals(savedBytes, essayFile.readBytes())
+        reopened.save(original.id, original.draft.copy(categories = setOf(WithinCategory.MOMENT)))
+        assertEquals(rich, reopened.load().first().draft)
+    }
+
+    @Test fun malformedParagraphsNeverOverwriteExistingEssay() = runBlocking {
+        val repository = WithinRepository(app)
+        val created = repository.save(null, WithinEssayDraft("原文\n后文", newerDate)).single()
+        val originalBytes = essayFile.readBytes()
+        val invalidOffsets = listOf(
+            listOf(WithinParagraphStyle(1)),
+            listOf(WithinParagraphStyle(0), WithinParagraphStyle(0)),
+            listOf(WithinParagraphStyle(3), WithinParagraphStyle(0))
+        )
+        for (paragraphs in invalidOffsets) {
+            val result = runCatching { repository.save(created.id, created.draft.copy(paragraphs = paragraphs)) }
+            assertTrue(result.exceptionOrNull() is IllegalArgumentException)
+            assertArrayEquals(originalBytes, essayFile.readBytes())
+        }
+        val unsupported = """{"version":2,"records":[
+            {"id":"unsupported","body":"原文","date":"2026-11-17","categories":[],
+             "paragraphs":[{"offset":0,"list":"UNKNOWN"}]}
+        ]}""".trimIndent().toByteArray()
+        essayFile.writeBytes(unsupported)
+        assertTrue(runCatching { repository.load() }.exceptionOrNull() is IOException)
+        assertTrue(runCatching { repository.save(null, created.draft) }.exceptionOrNull() is IOException)
+        assertArrayEquals(unsupported, essayFile.readBytes())
+    }
+
     private fun providedImage(path: String, bytes: ByteArray): Uri = Uri.parse("content://within-test/$path").also {
         shadowOf(app.contentResolver).registerInputStream(it, ByteArrayInputStream(bytes))
     }

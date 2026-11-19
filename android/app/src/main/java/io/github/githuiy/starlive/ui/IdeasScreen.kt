@@ -188,8 +188,8 @@ fun IdeasScreen(today: LocalDate, monday: LocalDate, onWeekSelected: (LocalDate)
                 if (!finished) return@awaitEachGesture
                 val threshold = 40.dp.toPx()
                 val destination = when {
-                    distance <= -threshold -> monday.minusWeeks(1)
-                    distance >= threshold -> monday.plusWeeks(1)
+                    distance <= -threshold -> monday.plusWeeks(1)
+                    distance >= threshold -> monday.minusWeeks(1)
                     else -> monday
                 }
                 if (destination != monday && destination in availableWeeks) swipeWeekAction(destination)
@@ -250,6 +250,12 @@ fun IdeasScreen(today: LocalDate, monday: LocalDate, onWeekSelected: (LocalDate)
                 Spacer(Modifier.height(heightBeforePicker))
                 val visibleMonday = if (slide.fraction < .5f) slide.monday else slide.nextMonday
                 SparksWeekPicker(today, visibleMonday, onWeekSelected, enabled = weekReady && focusProgress < .05f)
+                if (weekReady) {
+                    SparksWeekPlans(monday, plans, historical,
+                        onEdit = onUpdate?.takeUnless { historical }?.let {
+                            { recordTarget: IdeaTarget, item: PlanItem -> editing = SparksPlanEdit(recordTarget, item) }
+                        }, modifier = Modifier.fillMaxWidth().weight(1f))
+                }
             } else {
                 Spacer(Modifier.height(focusHeight))
                 if (!historical) {
@@ -409,6 +415,56 @@ private fun SparksRecommendations(ideas: List<LifeIdea>, category: String, onCat
 }
 
 @Composable
+private fun SparksWeekPlans(monday: LocalDate, week: WeekPlan, historical: Boolean,
+    onEdit: ((IdeaTarget, PlanItem) -> Unit)?, modifier: Modifier) {
+    val scroll = rememberSaveable(monday.toString(), saver = ScrollState.Saver) { ScrollState(0) }
+    Column(modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+        .verticalScroll(scroll).padding(horizontal = 20.dp, vertical = 10.dp)
+        .testTag("sparks_week_plans"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (week.days.all { it.isEmpty() }) {
+            Text("这一周还没有计划", color = Ink.copy(alpha = .85f),
+                modifier = Modifier.testTag("sparks_week_empty"), style = MaterialTheme.typography.bodyMedium)
+        } else {
+            Surface(Modifier.fillMaxWidth(), color = Night.copy(alpha = .68f),
+                shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line.copy(alpha = .65f))) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    week.days.forEachIndexed { day, records ->
+                        records.forEach { plan ->
+                            SparksPlanRecord(plan, day, enabled = true, showCompletion = historical,
+                                onEdit = onEdit?.let { edit -> { edit(IdeaTarget(monday, day), plan) } })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SparksPlanRecord(plan: PlanItem, day: Int, enabled: Boolean, showCompletion: Boolean,
+    onEdit: (() -> Unit)?) {
+    val title = "${Weekdays[day]} · ${plan.title.ifBlank { "尚未填写的事项" }}"
+    Column(Modifier.fillMaxWidth().testTag("sparks_plan_${plan.id}")
+        .then(if (onEdit != null) Modifier.clickable(enabled = enabled,
+            role = Role.Button, onClickLabel = "编辑计划", onClick = onEdit) else Modifier)
+        .sizeIn(minHeight = 48.dp).padding(vertical = 4.dp), verticalArrangement = Arrangement.Center) {
+        if (showCompletion) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = Ink, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                Text(if (plan.done) "已完成" else "未完成", color = if (plan.done) Gold else Ink.copy(alpha = .72f),
+                    modifier = Modifier.testTag("sparks_plan_status_${plan.id}"), style = MaterialTheme.typography.labelMedium)
+            }
+        } else {
+            Text(title, color = Ink, style = MaterialTheme.typography.bodyLarge)
+        }
+        if (plan.body.isNotBlank()) {
+            Text(plan.body, color = Ink.copy(alpha = .82f), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun SparksConfiguredPlans(target: IdeaTarget, today: LocalDate, plans: List<PlanItem>,
     onWeekSelected: (LocalDate) -> Unit, weekPickerEnabled: Boolean, onEdit: (() -> Unit)?,
     onEditItem: ((PlanItem) -> Unit)?, modifier: Modifier, compact: Boolean, showCompletion: Boolean) {
@@ -437,31 +493,8 @@ private fun SparksConfiguredPlans(target: IdeaTarget, today: LocalDate, plans: L
                                     modifier = Modifier.testTag("sparks_configured_empty"))
                             }
                             plans.forEach { plan ->
-                                val editItem = onEditItem?.let { edit -> { edit(plan) } }
-                                Column(Modifier.fillMaxWidth().testTag("sparks_plan_${plan.id}")
-                                    .then(if (editItem != null) Modifier.clickable(enabled = weekPickerEnabled,
-                                        role = Role.Button, onClickLabel = "编辑计划", onClick = editItem) else Modifier)
-                                    .sizeIn(minHeight = 48.dp).padding(vertical = 4.dp),
-                                    verticalArrangement = Arrangement.Center) {
-                                    if (showCompletion) {
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                            verticalAlignment = Alignment.CenterVertically) {
-                                            Text(plan.title.ifBlank { "尚未填写的事项" }, color = Ink,
-                                                modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                            Text(if (plan.done) "已完成" else "未完成",
-                                                color = if (plan.done) Gold else Ink.copy(alpha = .72f),
-                                                modifier = Modifier.testTag("sparks_plan_status_${plan.id}"),
-                                                style = MaterialTheme.typography.labelMedium)
-                                        }
-                                    } else {
-                                        Text(plan.title.ifBlank { "尚未填写的事项" }, color = Ink,
-                                            style = MaterialTheme.typography.bodyLarge)
-                                    }
-                                    if (plan.body.isNotBlank()) {
-                                        Text(plan.body, color = Ink.copy(alpha = .82f),
-                                            style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
+                                SparksPlanRecord(plan, target.day, weekPickerEnabled, showCompletion,
+                                    onEdit = onEditItem?.let { edit -> { edit(plan) } })
                             }
                             if (onEdit != null) {
                                 TextButton(onClick = onEdit, enabled = weekPickerEnabled,

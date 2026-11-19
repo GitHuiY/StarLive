@@ -321,6 +321,49 @@ class StarLiveUiTest {
         compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
     }
 
+    @Test fun weeklyEnergyReopensOnOverviewArrivalAndKeepsManualCollapseDuringAStay() {
+        goOverview()
+        val panel = compose.onNodeWithTag("weekly_records_panel", useUnmergedTree = true)
+        val edge = compose.onNodeWithTag("weekly_records_edge", useUnmergedTree = true)
+        panel.assertIsDisplayed()
+        compose.onNodeWithTag("weekly_records_grip", useUnmergedTree = true).performClick()
+        panel.assertDoesNotExist()
+        edge.assertIsDisplayed()
+        val week = PlanEngine.weekKey(LocalDate.now())
+        val title = "刷新后的周计划"
+        scenario.onActivity { ViewModelProvider(it)[PlanViewModel::class.java].repository.addPlan(week, 0, title, "阅读") }
+        awaitRepository("The overview did not receive updated week data") {
+            var loaded = false
+            scenario.onActivity { activity ->
+                loaded = ViewModelProvider(activity)[PlanViewModel::class.java].data?.weeks?.get(week)
+                    ?.days?.get(0)?.any { it.title == title } == true
+            }
+            loaded
+        }
+        panel.assertDoesNotExist()
+        edge.assertIsDisplayed()
+
+        tapMondayStar()
+        panel.assertDoesNotExist()
+        edge.assertDoesNotExist()
+        tapBlankSky()
+        panel.assertIsDisplayed()
+        compose.onNodeWithTag("weekly_records_grip", useUnmergedTree = true).performClick()
+        scenario.recreate()
+        compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+        panel.assertDoesNotExist()
+        edge.assertIsDisplayed()
+
+        tapMondayStar()
+        compose.onNodeWithTag("focused_sky", useUnmergedTree = true).assertIsDisplayed()
+        scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("overview", useUnmergedTree = true).assertIsDisplayed()
+        panel.assertIsDisplayed()
+        compose.onNodeWithTag("nav_space").performClick()
+        compose.onNodeWithTag("nav_stars").performClick()
+        panel.assertIsDisplayed()
+    }
+
     @Test fun focusedSkyUsesTwoColumnsAndOnlyCompletesWhenDraggedToItsStar() {
         val monday = LocalDate.parse(PlanEngine.weekKey(LocalDate.now()))
         val completed = "读十页书"
@@ -450,13 +493,13 @@ class StarLiveUiTest {
         }
         sparksDateClick("sparks_selected_date")
         compose.onNodeWithTag("sparks_configured_plans", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText(title).assertIsDisplayed()
+        compose.onNodeWithText("周三 · $title").assertIsDisplayed()
         compose.onNodeWithText(body).assertIsDisplayed()
     }
 
     // The custom plan editor contains text fields, so use the same Robolectric width workaround.
     @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-xxxhdpi", shadows = [PosixAtomicFileShadow::class])
-    @Test fun sparksReturnsToTheChosenWeekAndUsesTheSelectedCategoryForCustomPlans() {
+    @Test fun sparksResetsToThisWeekOnEntryAndUsesTheSelectedCategoryForCustomPlans() {
         val title = "留给下周日的小计划"
         val category = "运动"
         val today = LocalDate.now()
@@ -504,7 +547,7 @@ class StarLiveUiTest {
         compose.onNodeWithTag("nav_ideas").performClick()
         compose.onNodeWithTag("sparks_star_0", useUnmergedTree = true).assertIsDisplayed()
         sparksDateClick("sparks_week_picker")
-        compose.onNodeWithTag("sparks_week_$nextWeek", useUnmergedTree = true)
+        compose.onNodeWithTag("sparks_week_${PlanEngine.weekKey(today)}", useUnmergedTree = true)
             .performScrollTo().assertIsDisplayed().assertIsSelected()
         compose.onNodeWithTag("idea_custom", useUnmergedTree = true).assertDoesNotExist()
     }
@@ -571,8 +614,8 @@ class StarLiveUiTest {
         custom.assertDoesNotExist()
         compose.onNodeWithTag("sparks_configured_date", useUnmergedTree = true)
             .assertTextContains("${date.monthValue} 月 ${date.dayOfMonth} 日", substring = true)
-        compose.onNodeWithText(targetTitle).assertIsDisplayed()
-        compose.onNodeWithText(neighboringTitle).assertDoesNotExist()
+        compose.onNodeWithText("周三 · $targetTitle").assertIsDisplayed()
+        compose.onNodeWithText("周四 · $neighboringTitle").assertDoesNotExist()
         compose.onNodeWithTag("open_planner", useUnmergedTree = true).assertDoesNotExist()
 
         sparksDateClick("sparks_selected_date")
@@ -621,7 +664,7 @@ class StarLiveUiTest {
             .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(body)) }
         compose.onNodeWithTag("plan_editor_save", useUnmergedTree = true).performClick()
         editor.assertDoesNotExist()
-        compose.waitUntil(10_000) { textExists(updated) && !textExists(original) }
+        compose.waitUntil(10_000) { textExists("周一 · $updated") && !textExists("周一 · $original") }
         compose.onNodeWithText(body).assertIsDisplayed()
         row.assertIsDisplayed().performClick()
         compose.onNodeWithTag("plan_editor_delete", useUnmergedTree = true).performClick()

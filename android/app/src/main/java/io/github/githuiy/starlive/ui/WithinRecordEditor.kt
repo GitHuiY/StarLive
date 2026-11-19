@@ -7,35 +7,45 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -50,6 +60,18 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -58,13 +80,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,11 +91,17 @@ import io.github.githuiy.starlive.data.WithinCategory
 import io.github.githuiy.starlive.data.WithinEssay
 import io.github.githuiy.starlive.data.WithinEssayDraft
 import io.github.githuiy.starlive.data.WithinImageAttachment
+import io.github.githuiy.starlive.data.WithinListStyle
+import io.github.githuiy.starlive.data.WithinParagraphAlignment
+import io.github.githuiy.starlive.data.WithinParagraphStyle
 import io.github.githuiy.starlive.data.WithinTextStyle
 import io.github.githuiy.starlive.data.MAX_WITHIN_IMAGES
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -97,65 +122,119 @@ internal fun WithinEssayEditor(
         if (initial == null) today.toString() else original?.date?.toString().orEmpty()
     }
     val allowMissingDate = initial != null && original?.date == null
-    var body by rememberSaveable(initial?.id, stateSaver = TextFieldValue.Saver) {
+    var savedBody by rememberSaveable(initial?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(originalBody))
     }
-    var spans by rememberSaveable(initial?.id, stateSaver = withinSpanSaver) {
+    var savedSpans by rememberSaveable(initial?.id, stateSaver = withinSpanSaver) {
         mutableStateOf(original?.spans.orEmpty())
     }
-    var images by rememberSaveable(initial?.id, stateSaver = withinImageSaver) {
+    var savedImages by rememberSaveable(initial?.id, stateSaver = withinImageSaver) {
         mutableStateOf(original?.images.orEmpty())
     }
-    var pendingStyle by rememberSaveable(initial?.id, stateSaver = withinStyleSaver) {
+    var savedParagraphs by rememberSaveable(initial?.id, stateSaver = withinParagraphSaver) {
+        mutableStateOf(original?.paragraphs.orEmpty())
+    }
+    var savedPendingStyle by rememberSaveable(initial?.id, stateSaver = withinStyleSaver) {
         mutableStateOf(WithinTextStyle())
+    }
+    var importedImages by rememberSaveable(initial?.id, stateSaver = withinImageSaver) {
+        mutableStateOf(emptyList())
+    }
+    val session = rememberWithinEditorSession(initial?.id,
+        WithinEditSnapshot(savedBody, savedSpans, savedParagraphs, savedImages, savedPendingStyle))
+    var history by session.history
+    val (body, spans, paragraphs, images, pendingStyle) = history.current
+
+    fun applyHistory(next: WithinEditHistory) {
+        history = next
+        val snapshot = next.current
+        savedBody = snapshot.body
+        savedSpans = snapshot.spans
+        savedParagraphs = snapshot.paragraphs
+        savedImages = snapshot.images
+        savedPendingStyle = snapshot.pendingStyle
     }
     var date by rememberSaveable(initial?.id) { mutableStateOf(originalDate) }
     var categories by rememberSaveable(initial?.id, defaultCategory) { mutableStateOf(originalCategories.toList()) }
     var discard by rememberSaveable(initial?.id) { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var closing by remember { mutableStateOf(false) }
     var saveFailed by remember { mutableStateOf(false) }
     var importingImage by remember { mutableStateOf(false) }
     var imageError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val busy = saving || importingImage
+    val busy = saving || importingImage || closing
     val dirty = body.text != originalBody || spans != original?.spans.orEmpty() ||
-        images != original?.images.orEmpty() || date != originalDate || categories.toSet() != originalCategories
+        images != original?.images.orEmpty() || paragraphs != original?.paragraphs.orEmpty() ||
+        date != originalDate || categories.toSet() != originalCategories
 
-    fun removeDraftImages(removed: List<WithinImageAttachment>, onDone: () -> Unit = {}) {
-        val newlyAdded = removed.filter { image -> original?.images.orEmpty().none { it.id == image.id } }
-        if (newlyAdded.isEmpty()) {
-            onDone()
-        } else {
-            scope.launch {
-                importingImage = true
-                try {
-                    discardImages(newlyAdded)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    // Cleanup is best effort and never discards a committed attachment.
-                } finally {
-                    importingImage = false
-                }
-                onDone()
+    val releasableImages = remember(history, importedImages) {
+        if (importedImages.isEmpty()) emptyList() else {
+            val retained = history.retainedImages.mapTo(mutableSetOf()) { it.id }
+            importedImages.filterNot { it.id in retained }
+        }
+    }
+    LaunchedEffect(releasableImages) {
+        if (releasableImages.isNotEmpty()) {
+            try {
+                discardImages(releasableImages)
+                val removed = releasableImages.mapTo(mutableSetOf()) { it.id }
+                importedImages = importedImages.filterNot { it.id in removed }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Retry cleanup when the editor closes.
+            }
+        }
+    }
+
+    suspend fun finishEditor() {
+        if (importedImages.isNotEmpty()) {
+            try {
+                // The repository keeps every image referenced by a committed essay.
+                discardImages(importedImages)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // A successful save remains valid if unused files could not be removed.
+            }
+        }
+        session.release()
+        onDismiss()
+    }
+
+    fun dismissDraft() {
+        closing = true
+        scope.launch {
+            try {
+                finishEditor()
+            } finally {
+                closing = false
             }
         }
     }
 
     fun requestDismiss() {
         if (busy) return
-        if (dirty) discard = true else onDismiss()
+        if (dirty) discard = true else dismissDraft()
     }
 
-    fun addImage(uri: Uri) {
-        if (busy || images.size >= MAX_WITHIN_IMAGES) return
-        val position = body.selection.max
+    fun addImage(uri: Uri, name: String? = null) {
+        if (busy || images.size >= MAX_WITHIN_IMAGES) {
+            scope.launch { discardWithinTemporaryImage(context, uri) }
+            return
+        }
+        val position = history.current.body.selection.max
         importingImage = true
         imageError = null
         scope.launch {
             try {
-                images = images + importImage(uri, position)
+                val imported = importImage(uri, position)
+                val attachment = name?.let { imported.copy(name = it) } ?: imported
+                val current = history.current
+                importedImages = importedImages + attachment
+                applyHistory(history.record(current.copy(images = current.images + attachment)))
                 saveFailed = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -163,6 +242,7 @@ internal fun WithinEssayEditor(
                 imageError = failure.message ?: "无法打开这张图片。"
             } finally {
                 importingImage = false
+                withContext(NonCancellable) { discardWithinTemporaryImage(context, uri) }
             }
         }
     }
@@ -170,33 +250,82 @@ internal fun WithinEssayEditor(
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) addImage(uri)
     }
+    val takePhoto = rememberWithinPhotoCapture(onCaptured = { addImage(it, "拍照") }, onError = { imageError = it })
 
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val density = LocalDensity.current
+    val imePx = WindowInsets.ime.getBottom(density)
+    val imeTargetPx = WindowInsets.imeAnimationTarget.getBottom(density)
+    val navigationPx = WindowInsets.navigationBars.getBottom(density)
+    val keyboardElevation = with(density) { (imePx - navigationPx).coerceAtLeast(0).toDp() }
+    val keyboardTargetElevation = with(density) { (imeTargetPx - navigationPx).coerceAtLeast(0).toDp() }
+    val keyboardVisible = keyboardElevation > 0.dp
     var tools by rememberSaveable { mutableStateOf<WithinEditorTools?>(null) }
+    var drawing by rememberSaveable { mutableStateOf(false) }
+    var lastKeyboardHeight by rememberSaveable(LocalConfiguration.current.orientation) { mutableFloatStateOf(0f) }
+    var returningToKeyboard by remember { mutableStateOf(false) }
+    val switchToKeyboard by rememberUpdatedState<() -> Unit> {
+        if (tools != null && !busy) {
+            tools = null
+            returningToKeyboard = true
+        }
+    }
+
+    LaunchedEffect(keyboardTargetElevation) {
+        if (keyboardTargetElevation > 0.dp) lastKeyboardHeight = keyboardTargetElevation.value
+    }
+    LaunchedEffect(returningToKeyboard) {
+        if (returningToKeyboard) {
+            keyboard?.show()
+            delay(380)
+            returningToKeyboard = false
+        }
+    }
+    LaunchedEffect(returningToKeyboard, keyboardElevation, keyboardTargetElevation) {
+        if (returningToKeyboard && keyboardTargetElevation > 0.dp && keyboardElevation >= keyboardTargetElevation) {
+            returningToKeyboard = false
+        }
+    }
 
     BackHandler {
         when {
-            keyboardVisible -> keyboard?.hide()
             tools != null -> tools = null
+            keyboardVisible -> keyboard?.hide()
             else -> requestDismiss()
         }
     }
 
-    WithinDocumentPage(Modifier.testTag("within_editor")) {
+    fun restoreHistory(redo: Boolean) {
+        if (busy) return
+        val restored = if (redo) history.redo() else history.undo()
+        applyHistory(restored)
+        saveFailed = false
+    }
+
+    WithinDocumentPage(Modifier.testTag("within_editor").onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) {
+            false
+        } else if (event.key == Key.Z || event.key == Key.Y) {
+            restoreHistory(redo = event.key == Key.Y || event.isShiftPressed)
+            true
+        } else false
+    }) {
         WithinDocumentHeader(if (initial == null) "写随笔" else "编辑随笔", "within_editor_cancel",
             onBack = {
                 focus.clearFocus()
                 keyboard?.hide()
                 requestDismiss()
             }, backEnabled = !busy) {
+            WithinHistoryButton(redo = false, enabled = !busy && history.canUndo) { restoreHistory(redo = false) }
+            WithinHistoryButton(redo = true, enabled = !busy && history.canRedo) { restoreHistory(redo = true) }
             val canSave = (body.text.isNotBlank() || images.isNotEmpty()) && !busy
             TextButton(enabled = canSave, modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("within_editor_save"),
                 onClick = {
                     val recordedOn = date.takeIf(String::isNotBlank)?.let(LocalDate::parse)
-                    val draft = WithinEssayDraft(body = body.text, date = recordedOn, categories = categories.toSet(),
-                        spans = spans, images = images)
+                    val snapshot = history.current
+                    val draft = WithinEssayDraft(body = snapshot.body.text, date = recordedOn, categories = categories.toSet(),
+                        spans = snapshot.spans, images = snapshot.images, paragraphs = snapshot.paragraphs)
                     focus.clearFocus()
                     keyboard?.hide()
                     saving = true
@@ -204,7 +333,7 @@ internal fun WithinEssayEditor(
                     scope.launch {
                         try {
                             onSave(draft)
-                            onDismiss()
+                            finishEditor()
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
@@ -228,34 +357,64 @@ internal fun WithinEssayEditor(
                     modifier = Modifier.padding(horizontal = 10.dp), showRow = showMetadata)
                 if (saveFailed) WithinWriteError("未能保存随笔。可以重试。", Modifier.padding(horizontal = 22.dp))
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val panelHeight = ((maxHeight - 49.dp).coerceAtLeast(0.dp) * .5f).coerceAtMost(250.dp)
+                    val panelTarget = if (lastKeyboardHeight > 0f) lastKeyboardHeight.dp else 264.dp
+                    val panelHeight = (panelTarget - keyboardElevation).coerceIn(0.dp,
+                        (maxHeight - 49.dp - 72.dp).coerceAtLeast(0.dp))
                     Column(Modifier.fillMaxSize()) {
                         BasicTextField(
                             value = body,
-                            onValueChange = {
-                                withinTextEdit(body, it)?.let { edit ->
-                                    val style = if (body.text.isEmpty()) pendingStyle else
-                                        withinStyleAt(spans, if (body.selection.collapsed) (edit.start - 1).coerceAtLeast(0) else edit.start)
-                                    spans = edit.updateSpans(spans, style)
-                                    images = edit.updateImages(images)
-                                    if (it.text.isEmpty()) pendingStyle = style
+                            onValueChange = { value ->
+                                val current = history.current
+                                val field = current.body
+                                val exitList = withinListExitOnEnter(field, value, current.paragraphs, current.images)
+                                if (exitList != null) {
+                                    applyHistory(history.record(current.copy(paragraphs = exitList)))
+                                } else {
+                                    val edit = withinTextEdit(field, value)
+                                    val next = if (edit == null) {
+                                        current.copy(body = value)
+                                    } else {
+                                        val style = if (field.text.isEmpty()) current.pendingStyle else {
+                                            val index = if (field.selection.collapsed) (edit.start - 1).coerceAtLeast(0) else edit.start
+                                            withinStyleAt(current.spans, index)
+                                        }
+                                        current.copy(body = value, spans = edit.updateSpans(current.spans, style),
+                                            images = edit.updateImages(current.images),
+                                            paragraphs = edit.updateParagraphs(field.text, value.text, current.paragraphs),
+                                            pendingStyle = if (value.text.isEmpty()) style else current.pendingStyle)
+                                    }
+                                    applyHistory(history.record(next, WithinEditKind.TEXT))
                                 }
-                                body = it
                                 saveFailed = false
                             },
                             textStyle = MaterialTheme.typography.bodyLarge.copy(color = WithinWritingInk, lineHeight = 28.sp),
                             cursorBrush = SolidColor(Gold),
-                            visualTransformation = remember(spans) {
-                                VisualTransformation { text ->
-                                    TransformedText(withinStyledText(text.text, spans), OffsetMapping.Identity)
-                                }
+                            visualTransformation = remember(spans, paragraphs) {
+                                VisualTransformation { text -> withinEditorText(text.text, spans, paragraphs) }
                             },
                             enabled = !busy,
                             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp)
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                        var shortTap = true
+                                        do {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop ||
+                                                change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis ||
+                                                event.changes.count { it.pressed } > 1) shortTap = false
+                                            if (!change.pressed) {
+                                                if (shortTap) switchToKeyboard()
+                                                break
+                                            }
+                                        } while (true)
+                                    }
+                                }
                                 .testTag("within_editor_body").semantics { contentDescription = "随笔正文" },
                             decorationBox = { innerTextField ->
                                 Box(Modifier.fillMaxSize()) {
-                                    if (body.text.isEmpty()) {
+                                    if (body.text.isEmpty() && paragraphs.isEmpty()) {
                                         Text("写下此刻的想法…", color = Muted, style = MaterialTheme.typography.bodyLarge)
                                     }
                                     innerTextField()
@@ -263,41 +422,79 @@ internal fun WithinEssayEditor(
                             },
                         )
 
-                        if (tools != null && panelHeight > 0.dp) {
-                            val activePanel = tools
+                        WithinEditorToolbar(tools, images.size, !busy) { chosen ->
+                            returningToKeyboard = false
+                            if (tools == chosen) tools = null else {
+                                tools = chosen
+                                keyboard?.hide()
+                            }
+                        }
+                        val activePanel = tools
+                        if ((activePanel != null || returningToKeyboard) && panelHeight > 0.dp) {
                             key(activePanel) {
-                                Column(Modifier.fillMaxWidth().background(Night.copy(alpha = .66f)).heightIn(max = panelHeight)
-                                    .verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 6.dp)) {
-                                    if (activePanel == WithinEditorTools.Style) {
+                                Column(Modifier.fillMaxWidth().height(panelHeight).background(Night.copy(alpha = .83f))
+                                    .testTag("within_editor_tool_panel").verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)) {
+                                    when (activePanel) {
+                                    WithinEditorTools.Style -> {
                                         val range = if (body.selection.collapsed) TextRange(0, body.text.length) else body.selection
                                         val currentStyle = if (body.text.isEmpty()) pendingStyle else withinStyleAt(spans, range.min)
                                         WithinFormatBar(currentStyle, enabled = !busy) { format ->
-                                            if (body.text.isEmpty()) pendingStyle = format(pendingStyle)
-                                            else spans = formatWithinText(spans, range.min, range.max, format)
+                                            val current = history.current
+                                            val field = current.body
+                                            val selection = if (field.selection.collapsed) TextRange(0, field.text.length) else field.selection
+                                            val next = if (field.text.isEmpty()) current.copy(pendingStyle = format(current.pendingStyle))
+                                            else current.copy(spans = formatWithinText(current.spans, selection.min, selection.max, format))
+                                            applyHistory(history.record(next))
                                             saveFailed = false
                                         }
-                                    } else {
+                                    }
+                                    WithinEditorTools.Paragraph -> {
+                                        val style = withinParagraphStyleAt(body.text, paragraphs, body.selection.min)
+                                        WithinParagraphTools(style.alignment, style.list, !busy) { change ->
+                                            val current = history.current
+                                            val field = current.body
+                                            val updated = formatWithinParagraphs(field.text, current.paragraphs,
+                                                field.selection.min, field.selection.max, change)
+                                            applyHistory(history.record(current.copy(paragraphs = updated)))
+                                            saveFailed = false
+                                        }
+                                    }
+                                    WithinEditorTools.Images -> {
                                         WithinEditorImages(images, busy, importingImage, imageError, loadImage,
                                             onPick = { pickImage.launch("image/*") },
+                                            onCamera = takePhoto,
                                             onPaste = {
                                                 val clipboard = context.getSystemService(ClipboardManager::class.java)?.primaryClip
                                                 val uri = clipboard?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
                                                 if (uri == null) imageError = "剪贴板里没有可粘贴的图片。" else addImage(uri)
                                             },
                                             onRemove = { image ->
-                                                images = images.filterNot { it.id == image.id }
-                                                removeDraftImages(listOf(image))
+                                                val current = history.current
+                                                applyHistory(history.record(current.copy(images = current.images.filterNot { it.id == image.id })))
                                             })
+                                    }
+                                    WithinEditorTools.More -> WithinToolTile("within_editor_doodle", "涂鸦",
+                                        enabled = !busy && images.size < MAX_WITHIN_IMAGES,
+                                        onClick = { keyboard?.hide(); drawing = true }) { color ->
+                                        Text("✎", color = color, fontSize = 25.sp)
+                                    }
+                                    null -> Unit
                                     }
                                 }
                             }
                         }
-                        WithinEditorToolbar(tools, images.size, !busy) { tools = if (tools == it) null else it }
                     }
                 }
             }
         }
     }
+
+    if (drawing) WithinDoodlePage(onDismiss = { drawing = false }, onComplete = { uri ->
+        drawing = false
+        addImage(uri, "涂鸦")
+        tools = WithinEditorTools.Images
+    })
 
     if (discard) {
         AlertDialog(
@@ -306,7 +503,7 @@ internal fun WithinEssayEditor(
             title = { Text("放弃未保存的内容？") },
             dismissButton = { TextButton(onClick = { discard = false }) { Text("继续编辑") } },
             confirmButton = {
-                TextButton(onClick = { removeDraftImages(images, onDismiss) }, enabled = !busy,
+                TextButton(onClick = ::dismissDraft, enabled = !busy,
                     modifier = Modifier.testTag("within_editor_discard")) {
                     Text("放弃")
                 }
@@ -315,30 +512,96 @@ internal fun WithinEssayEditor(
     }
 }
 
-private enum class WithinEditorTools { Style, Images }
+@Composable
+private fun WithinHistoryButton(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val description = if (redo) "重做" else "撤销"
+    IconButton(onClick = onClick, enabled = enabled,
+        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .testTag(if (redo) "within_editor_redo" else "within_editor_undo")
+            .semantics { contentDescription = description }) {
+        Canvas(Modifier.size(21.dp)) {
+            fun x(fraction: Float) = size.width * if (redo) 1f - fraction else fraction
+            val arrow = Path().apply {
+                moveTo(x(.38f), size.height * .25f)
+                lineTo(x(.16f), size.height * .47f)
+                lineTo(x(.38f), size.height * .69f)
+                moveTo(x(.17f), size.height * .47f)
+                lineTo(x(.60f), size.height * .47f)
+                cubicTo(x(.89f), size.height * .47f, x(.88f), size.height * .78f, x(.65f), size.height * .81f)
+            }
+            drawPath(arrow, if (enabled) Gold else Muted.copy(alpha = .53f),
+                style = Stroke(1.7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+    }
+}
+
+private enum class WithinEditorTools { Style, Paragraph, Images, More }
 
 @Composable
 private fun WithinEditorToolbar(tools: WithinEditorTools?, imageCount: Int, enabled: Boolean,
     onTools: (WithinEditorTools) -> Unit) {
     HorizontalDivider(color = Line.copy(alpha = .58f))
-    Row(Modifier.fillMaxWidth().background(Night.copy(alpha = .70f)).padding(horizontal = 10.dp)
-        .testTag("within_editor_toolbar"), horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Row(Modifier.fillMaxWidth().background(Night.copy(alpha = .78f)).padding(horizontal = 10.dp)
+        .testTag("within_editor_toolbar"),
         verticalAlignment = Alignment.CenterVertically) {
-        val styleSelected = tools == WithinEditorTools.Style
-        val imagesSelected = tools == WithinEditorTools.Images
-        TextButton(onClick = { onTools(WithinEditorTools.Style) }, enabled = enabled,
-            modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("within_editor_format_tools")
-                .semantics { selected = styleSelected; contentDescription = "文字样式" }) {
-            Text("Aa", fontSize = 19.sp, color = if (styleSelected) Gold else WithinWritingInk)
+        WithinFormatChoice("within_editor_format_tools", "文字样式", tools == WithinEditorTools.Style, enabled,
+            { onTools(WithinEditorTools.Style) }, Modifier.weight(1f)) { color ->
+            Text("Aa", fontSize = 19.sp, color = color)
         }
-        TextButton(onClick = { onTools(WithinEditorTools.Images) }, enabled = enabled,
-            modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("within_editor_image_tools")
-                .semantics { selected = imagesSelected }) {
-            val color = if (imagesSelected) Gold else WithinWritingInk
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                WithinPictureIcon(color)
-                Text(if (imageCount == 0) "图片" else "图片 $imageCount", color = color)
+        WithinFormatChoice("within_editor_paragraph_tools", "段落", tools == WithinEditorTools.Paragraph, enabled,
+            { onTools(WithinEditorTools.Paragraph) }, Modifier.weight(1f)) { color ->
+            WithinParagraphIcon(WithinParagraphAlignment.START, color)
+        }
+        WithinFormatChoice("within_editor_image_tools", if (imageCount == 0) "插图" else "插图，已有 $imageCount 张",
+            tools == WithinEditorTools.Images, enabled, { onTools(WithinEditorTools.Images) }, Modifier.weight(1f)) { color ->
+            WithinPictureIcon(color)
+        }
+        WithinFormatChoice("within_editor_more_tools", "更多工具", tools == WithinEditorTools.More, enabled,
+            { onTools(WithinEditorTools.More) }, Modifier.weight(1f)) { color ->
+            Text("+", fontSize = 26.sp, color = color)
+        }
+    }
+}
+
+@Composable
+private fun WithinParagraphTools(alignment: WithinParagraphAlignment, list: WithinListStyle, enabled: Boolean,
+    onFormat: ((WithinParagraphStyle) -> WithinParagraphStyle) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((name, option) in listOf("左对齐" to WithinParagraphAlignment.START,
+                "居中" to WithinParagraphAlignment.CENTER, "右对齐" to WithinParagraphAlignment.END)) {
+                WithinFormatChoice("within_paragraph_" + option.name, name, alignment == option, enabled,
+                    { onFormat { it.copy(alignment = option) } }, Modifier.weight(1f)) { color ->
+                    WithinParagraphIcon(option, color)
+                }
             }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val styles = listOf(Triple("圆点", "•", WithinListStyle.BULLET),
+                Triple("数字", "1.", WithinListStyle.DECIMAL), Triple("字母", "a.", WithinListStyle.LETTERS))
+            for ((name, mark, option) in styles) {
+                WithinFormatChoice("within_list_" + option.name, name, list == option, enabled,
+                    { onFormat { it.copy(list = if (list == option) WithinListStyle.NONE else option) } },
+                    Modifier.weight(1f)) { color -> Text("$mark $name", color = color) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WithinParagraphIcon(alignment: WithinParagraphAlignment, color: Color) {
+    Canvas(Modifier.size(20.dp)) {
+        val margin = 2.dp.toPx()
+        val available = size.width - margin * 2
+        for (row in 0..3) {
+            val length = available * if (row % 2 == 0) 1f else .63f
+            val x = margin + when (alignment) {
+                WithinParagraphAlignment.START -> 0f
+                WithinParagraphAlignment.CENTER -> (available - length) / 2f
+                WithinParagraphAlignment.END -> available - length
+            }
+            val y = size.height * (.20f + row * .2f)
+            drawLine(color, Offset(x, y), Offset(x + length, y), strokeWidth = 1.6.dp.toPx(), cap = StrokeCap.Round)
         }
     }
 }
@@ -362,18 +625,27 @@ private fun WithinPictureIcon(color: Color) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WithinEditorImages(images: List<WithinImageAttachment>, busy: Boolean, importing: Boolean,
     error: String?, loadImage: suspend (WithinImageAttachment) -> ByteArray, onPick: () -> Unit, onPaste: () -> Unit,
-    onRemove: (WithinImageAttachment) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    onCamera: () -> Unit, onRemove: (WithinImageAttachment) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val canAdd = !busy && images.size < MAX_WITHIN_IMAGES
-        TextButton(onClick = onPick, enabled = canAdd, modifier = Modifier.testTag("within_editor_pick_image")) {
-            Text("插入图片")
+        WithinToolTile("within_editor_pick_image", "相册", canAdd, onPick, Modifier.weight(1f)) { color ->
+            WithinPictureIcon(color)
         }
-        TextButton(onClick = onPaste, enabled = canAdd, modifier = Modifier.testTag("within_editor_paste_image")) {
-            Text("粘贴图片")
+        WithinToolTile("within_editor_take_photo", "拍照", canAdd, onCamera, Modifier.weight(1f)) { color ->
+            Canvas(Modifier.size(20.dp)) {
+                val stroke = Stroke(1.5.dp.toPx())
+                drawRoundRect(color, Offset(size.width * .10f, size.height * .28f), Size(size.width * .80f, size.height * .58f),
+                    CornerRadius(2.dp.toPx()), style = stroke)
+                drawCircle(color, size.width * .16f, Offset(size.width * .50f, size.height * .57f), style = stroke)
+                drawLine(color, Offset(size.width * .34f, size.height * .18f), Offset(size.width * .66f, size.height * .18f),
+                    strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round)
+            }
+        }
+        WithinToolTile("within_editor_paste_image", "粘贴图片", canAdd, onPaste, Modifier.weight(1f)) { color ->
+            Text("▤", color = color, fontSize = 21.sp)
         }
     }
     if (importing) Text("正在处理图片…", color = Muted)
@@ -385,6 +657,19 @@ private fun WithinEditorImages(images: List<WithinImageAttachment>, busy: Boolea
             TextButton(onClick = { onRemove(image) }, enabled = !busy) { Text("移除") }
         }
         WithinAttachmentImage(image, loadImage, Modifier.fillMaxWidth().heightIn(max = 120.dp))
+    }
+}
+
+@Composable
+private fun WithinToolTile(tag: String, label: String, enabled: Boolean, onClick: () -> Unit,
+    modifier: Modifier = Modifier, icon: @Composable (Color) -> Unit) {
+    Surface(onClick = onClick, enabled = enabled, color = Ink.copy(alpha = .08f),
+        shape = RoundedCornerShape(14.dp), modifier = modifier.sizeIn(minWidth = 86.dp, minHeight = 78.dp).testTag(tag)) {
+        Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
+            icon(if (enabled) Gold else Muted)
+            Text(label, color = if (enabled) WithinWritingInk else Muted, style = MaterialTheme.typography.labelMedium)
+        }
     }
 }
 

@@ -80,7 +80,8 @@ internal fun WithinEssayPreview(draft: WithinEssayDraft) {
         Text(summary, color = Ink, style = MaterialTheme.typography.bodyLarge,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
     } else {
-        Text(withinStyledText(draft.body, draft.spans), color = Ink, style = MaterialTheme.typography.bodyLarge,
+        Text(withinStyledText(draft.body, draft.spans, paragraphs = draft.paragraphs, listMarkers = true),
+            color = Ink, style = MaterialTheme.typography.bodyLarge,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -109,7 +110,8 @@ internal fun WithinEssayContent(draft: WithinEssayDraft, loadImage: suspend (Wit
 
 @Composable
 private fun WithinEssayText(draft: WithinEssayDraft, start: Int, end: Int, modifier: Modifier = Modifier) {
-    Text(withinStyledText(draft.body, draft.spans, start, end), modifier, color = Ink,
+    Text(withinStyledText(draft.body, draft.spans, start, end, draft.paragraphs, listMarkers = true),
+        modifier.fillMaxWidth(), color = WithinWritingInk,
         style = MaterialTheme.typography.bodyLarge)
 }
 

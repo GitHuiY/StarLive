@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -35,14 +36,18 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.githuiy.starlive.data.WithinFontFamily
+import io.github.githuiy.starlive.data.WithinListStyle
+import io.github.githuiy.starlive.data.WithinParagraphAlignment
 import io.github.githuiy.starlive.data.WithinRepository
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.runBlocking
@@ -196,13 +201,12 @@ class WithinUiTest {
         editorText("body", text)
         val selectionEnd = text.indexOf('\n')
         selectBody(0, selectionEnd)
-        formatTool("within_format_font").performClick()
-        node("within_font_SERIF").performClick()
-        formatTool("within_format_size").performClick()
-        node("within_size_24").performClick()
-        formatTool("within_format_color").performClick()
-        node("within_color_1").performClick()
+        formatTool("within_font_SERIF").performClick()
+        formatTool("within_size_24").performClick()
+        formatTool("within_color_1").performClick()
         formatTool("within_format_bold").performClick()
+        formatTool("within_format_strikethrough").performClick()
+        formatTool("within_format_highlight").performClick()
         node("within_editor_save").performClick()
         waitForEditorToClose()
 
@@ -215,8 +219,7 @@ class WithinUiTest {
         openEssay(text)
         node("within_edit").performClick()
         selectBody(text.length, text.length)
-        formatTool("within_format_color").performClick()
-        node("within_color_2").performClick()
+        formatTool("within_color_2").performClick()
         node("within_editor_save").performClick()
         waitForEditorToClose()
 
@@ -229,14 +232,146 @@ class WithinUiTest {
         assertEquals(WithinFontFamily.SERIF, selected.style.fontFamily)
         assertEquals(24, selected.style.fontSizeSp)
         assertTrue(selected.style.bold)
+        assertTrue(selected.style.strikethrough && selected.style.highlight)
         assertEquals(selectionEnd, remaining.start)
         assertEquals(text.length, remaining.end)
         assertFalse(remaining.style.bold)
+        assertFalse(remaining.style.strikethrough || remaining.style.highlight)
         assertNull(remaining.style.fontFamily)
         assertNull(remaining.style.fontSizeSp)
         assertEquals(0xFFB9DEFF.toInt(), selected.style.colorArgb)
         assertEquals(selected.style.colorArgb, remaining.style.colorArgb)
         node("within_essay_body").assertTextContains(text)
+    }
+
+    @Test fun paragraphToolsKeepTheSelectionAndSaveFormattingWithoutChangingTheBody() {
+        openWithin()
+        add()
+        val text = "第一段\n第二段\n第三段"
+        val third = text.indexOf("第三段")
+        editorText("body", text)
+        selectBody(0, third)
+        node("within_editor_format_tools").performClick().assertIsSelected()
+        node("within_editor_paragraph_tools").performClick().assertIsSelected()
+        node("within_editor_format_tools").assertIsNotSelected()
+        node("within_format_bold").assertDoesNotExist()
+        node("within_paragraph_CENTER").performClick()
+        node("within_list_DECIMAL").performClick()
+        pressBack()
+        node("within_editor_tool_panel").assertDoesNotExist()
+        node("within_editor_paragraph_tools").assertIsNotSelected()
+        selectBody(text.length, text.length)
+        node("within_editor_paragraph_tools").performClick()
+        node("within_paragraph_END").performClick()
+        node("within_list_LETTERS").performClick()
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val record = runBlocking { repository.load().single() }
+        assertEquals(text, record.draft.body)
+        assertEquals(listOf(0, text.indexOf("第二段"), third), record.draft.paragraphs.map { it.offset })
+        assertEquals(listOf(WithinParagraphAlignment.CENTER, WithinParagraphAlignment.CENTER, WithinParagraphAlignment.END),
+            record.draft.paragraphs.map { it.alignment })
+        assertEquals(listOf(WithinListStyle.DECIMAL, WithinListStyle.DECIMAL, WithinListStyle.LETTERS),
+            record.draft.paragraphs.map { it.list })
+        listNode("within_essay_" + record.id).performClick()
+        node("within_essay_body").assertTextContains("1. 第一段\n2. 第二段\na. 第三段")
+    }
+
+    @Test fun writerUndoAndRedoRestoreFormattingAndSelectionAcrossRecreation() {
+        openWithin()
+        add()
+        val undo = node("within_editor_undo").assertIsNotEnabled()
+        val redo = node("within_editor_redo").assertIsNotEnabled()
+        val phrase = "星光\n计划"
+        editorText("body", phrase)
+        selectBody(0, 2)
+        formatTool("within_format_bold").performClick().assertIsSelected()
+        undo.performClick()
+        node("within_format_bold").assertIsNotSelected()
+        val selection = node("within_editor_body").fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange]
+        assertEquals(TextRange(0, 2), selection)
+
+        checkNotNull(scenario).recreate()
+        compose.waitUntil(10_000) { hasTag("within_editor") && hasTag("within_format_bold") }
+        redo.assertIsEnabled().performClick()
+        node("within_format_bold").assertIsSelected()
+        redo.assertIsNotEnabled()
+        node("within_editor_paragraph_tools").performClick()
+        node("within_paragraph_CENTER").performClick().assertIsSelected()
+        undo.performClick()
+        node("within_paragraph_START").assertIsSelected()
+        node("within_paragraph_END").performClick().assertIsSelected()
+        redo.assertIsNotEnabled()
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val draft = runBlocking { repository.load().single().draft }
+        assertEquals(phrase, draft.body)
+        assertTrue(draft.spans.single().style.bold)
+        assertEquals(2, draft.spans.single().end)
+        assertEquals(WithinParagraphAlignment.END, draft.paragraphs.single().alignment)
+    }
+
+    @Test fun enterContinuesTheListAndExitsAnEmptyItemAsOneUndoableStep() {
+        openWithin()
+        add()
+        val text = "第一项"
+        editorText("body", text)
+        selectBody(text.length, text.length)
+        node("within_editor_paragraph_tools").performClick()
+        val list = node("within_list_DECIMAL").performClick().assertIsSelected()
+        val body = node("within_editor_body")
+        body.performTextInput("\n")
+        list.assertIsSelected()
+        body.performTextInput("\n")
+        list.assertIsNotSelected()
+        node("within_editor_undo").performClick()
+        list.assertIsSelected()
+        node("within_editor_redo").performClick()
+        list.assertIsNotSelected()
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val draft = runBlocking { repository.load().single().draft }
+        assertEquals("$text\n", draft.body)
+        assertEquals(listOf(0), draft.paragraphs.map { it.offset })
+        assertEquals(WithinListStyle.DECIMAL, draft.paragraphs.single().list)
+    }
+
+    @Config(shadows = [PosixAtomicFileShadow::class, FileProviderPathShadow::class])
+    @Test fun doodleCanBeUndoneCanceledAndReopenedAsAnEssayAttachment() {
+        openWithin()
+        add()
+        val text = "随笔涂鸦测试"
+        editorText("body", text)
+        selectBody(text.length, text.length)
+        node("within_editor_more_tools").performClick()
+        node("within_editor_doodle").performClick()
+        node("within_doodle_done").assertIsNotEnabled()
+        node("within_doodle_canvas").performTouchInput { swipeRight() }
+        node("within_doodle_undo").performClick()
+        node("within_doodle_done").assertIsNotEnabled()
+        node("within_doodle_cancel").performClick()
+        node("within_doodle").assertDoesNotExist()
+        node("within_editor_doodle").performClick()
+        node("within_doodle_canvas").performTouchInput { swipeRight() }
+        node("within_doodle_done").performClick()
+        compose.waitUntil(10_000) { !hasTag("within_doodle") && hasDraftImage("涂鸦") }
+        node("within_editor_save").performClick()
+        waitForEditorToClose()
+
+        val repository = WithinRepository(ApplicationProvider.getApplicationContext<Application>())
+        val draft = runBlocking { repository.load().single().draft }
+        val image = draft.images.single()
+        assertEquals(text, draft.body)
+        assertEquals(text.length, image.offset)
+        assertEquals("image/png", image.mimeType)
+        openEssay(text)
+        compose.waitUntil(10_000) { hasTag("within_image_" + image.id) }
+        node("within_image_" + image.id).assertIsDisplayed().assertContentDescriptionContains("涂鸦")
     }
 
     @Test fun immersiveWriterKeepsControlsFixedAndConfirmsDiscardForSystemBack() {
@@ -278,7 +413,7 @@ class WithinUiTest {
         node("within_editor_cancel").assertIsDisplayed()
         node("within_editor_save").assertIsDisplayed()
         node("within_editor_format_tools").performClick()
-        node("within_format_font").reveal().assertIsDisplayed()
+        node("within_format_bold").reveal().assertIsDisplayed()
         val body = node("within_editor_body").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val toolbar = node("within_editor_toolbar").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(body.height > 0 && body.bottom <= toolbar.top)
@@ -313,6 +448,14 @@ class WithinUiTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithContentDescription("图片", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
+        node("within_editor_undo").performClick()
+        compose.waitUntil(10_000) { !hasDraftImage("图片") }
+        node("within_editor_redo").performClick()
+        compose.waitUntil(10_000) { hasDraftImage("图片") }
+        compose.onNodeWithText("移除").reveal().performClick()
+        compose.waitUntil(10_000) { !hasDraftImage("图片") }
+        node("within_editor_undo").performClick()
+        compose.waitUntil(10_000) { hasDraftImage("图片") }
         node("within_editor_save").performClick()
         waitForEditorToClose()
 
@@ -391,7 +534,7 @@ class WithinUiTest {
 
     private fun selectBody(start: Int, end: Int) {
         node("within_editor_body").reveal().performSemanticsAction(SemanticsActions.SetSelection) {
-            it(start, end, false)
+            it(start, end, true)
         }
     }
 
@@ -399,6 +542,9 @@ class WithinUiTest {
         if (!hasTag(tag)) node("within_editor_format_tools").performClick()
         return node(tag).reveal()
     }
+
+    private fun hasDraftImage(description: String) =
+        compose.onAllNodesWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
 
     private fun pressBack() {
         checkNotNull(scenario).onActivity { it.onBackPressedDispatcher.onBackPressed() }

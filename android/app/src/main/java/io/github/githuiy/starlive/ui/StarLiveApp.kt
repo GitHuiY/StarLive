@@ -103,7 +103,7 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
     var offset by rememberSaveable { mutableStateOf(0) }
     var archivedWeek by rememberSaveable { mutableStateOf<String?>(null) }
     var energyExpanded by rememberSaveable { mutableStateOf(false) }
-    var coldEnergyOpened by rememberSaveable { mutableStateOf(false) }
+    var energyWasInOverview by rememberSaveable { mutableStateOf(false) }
     var selectedDay by rememberSaveable { mutableStateOf(today.dayOfWeek.value - 1) }
     var sparksDay by rememberSaveable { mutableStateOf<Int?>(null) }
     var sparksWeekKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -153,8 +153,8 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         settlingIntro = false
         if (target != "stars") energyExpanded = false
         if (target == "planner" || target == "ideas") archivedWeek = null
-        if (target == "ideas" && page != "ideas" && sparksWeekKey == null) {
-            sparksWeekKey = currentMonday.plusWeeks(offset.toLong()).toString()
+        if (target == "ideas" && page != "ideas") {
+            sparksWeekKey = currentMonday.toString()
         }
         if (target != page) sparksDay = null
         page = target
@@ -199,14 +199,11 @@ fun StarLiveApp(data: AppState?, loading: Boolean, error: String?, today: LocalD
         playingIntro = eligibleStartupIntro
         introDecisionMade = true
     }
-    val openColdEnergy = allowStartupIntro && !coldEnergyOpened && dataReady && resumed &&
-        introDecisionMade && !playingIntro && !settlingIntro && page == "stars" && overview &&
-        monday == currentMonday && openMonitorRequest == 0 && debugIntroRequest == 0
-    LaunchedEffect(openColdEnergy) {
-        if (openColdEnergy) {
-            coldEnergyOpened = true
-            energyExpanded = true
-        }
+    val homeOverview = page == "stars" && overview
+    LaunchedEffect(homeOverview) {
+        if (homeOverview && !energyWasInOverview) energyExpanded = true
+        if (!homeOverview) energyExpanded = false
+        energyWasInOverview = homeOverview
     }
     val waitingToFocus = dataReady && introDecisionMade && !playingIntro && !settlingIntro &&
         autoFocusToday && resumed && page == "stars" && offset == 0 && overview &&

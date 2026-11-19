@@ -34,11 +34,23 @@ internal data class WithinTextStyle(
     val colorArgb: Int? = null,
     val bold: Boolean = false,
     val italic: Boolean = false,
-    val underline: Boolean = false
+    val underline: Boolean = false,
+    val strikethrough: Boolean = false,
+    val highlight: Boolean = false
 )
 
 /** Text ranges and image anchors use UTF-16 offsets, like Compose text selection. */
 internal data class WithinTextSpan(val start: Int, val end: Int, val style: WithinTextStyle)
+
+internal enum class WithinParagraphAlignment { START, CENTER, END }
+internal enum class WithinListStyle { NONE, BULLET, DECIMAL, LETTERS }
+
+/** Each entry styles the paragraph beginning at offset, including an empty final paragraph. */
+internal data class WithinParagraphStyle(
+    val offset: Int,
+    val alignment: WithinParagraphAlignment = WithinParagraphAlignment.START,
+    val list: WithinListStyle = WithinListStyle.NONE
+)
 
 internal data class WithinImageAttachment(
     val id: String,
@@ -61,7 +73,8 @@ internal data class WithinEssayDraft(
     val date: LocalDate?,
     val categories: Set<WithinCategory> = emptySet(),
     val spans: List<WithinTextSpan> = emptyList(),
-    val images: List<WithinImageAttachment> = emptyList()
+    val images: List<WithinImageAttachment> = emptyList(),
+    val paragraphs: List<WithinParagraphStyle> = emptyList()
 )
 
 internal data class WithinEssay(
@@ -83,7 +96,7 @@ internal class WithinRepository(context: Context) {
 
     suspend fun save(recordId: String?, draft: WithinEssayDraft): List<WithinEssay> {
         val content = draft.copy(categories = draft.categories.toSet(), spans = draft.spans.toList(),
-            images = draft.images.toList())
+            images = draft.images.toList(), paragraphs = draft.paragraphs.toList())
         validateDraft(content)
         return updateRecords { records ->
             content.images.forEach { image ->
@@ -281,6 +294,12 @@ internal class WithinRepository(context: Context) {
                 images = optionalObjects("images") { image ->
                     WithinImageAttachment(image.get("id") as String, image.get("name") as String,
                         image.get("mimeType") as String, image.get("offset") as Int)
+                },
+                paragraphs = optionalObjects("paragraphs") { paragraph ->
+                    WithinParagraphStyle(paragraph.get("offset") as Int,
+                        paragraph.optionalText("alignment")?.let(WithinParagraphAlignment::valueOf)
+                            ?: WithinParagraphAlignment.START,
+                        paragraph.optionalText("list")?.let(WithinListStyle::valueOf) ?: WithinListStyle.NONE)
                 }
             ),
             legacy = if (isNull("legacy")) null else getJSONObject("legacy").readProfileMetadata()
@@ -300,7 +319,9 @@ internal class WithinRepository(context: Context) {
         colorArgb = optionalInt("colorArgb"),
         bold = optionalBoolean("bold"),
         italic = optionalBoolean("italic"),
-        underline = optionalBoolean("underline")
+        underline = optionalBoolean("underline"),
+        strikethrough = optionalBoolean("strikethrough"),
+        highlight = optionalBoolean("highlight")
     )
 
     private fun validateDraft(draft: WithinEssayDraft) {
@@ -321,6 +342,12 @@ internal class WithinRepository(context: Context) {
             }
             require(span.style.fontSizeSp == null || span.style.fontSizeSp in 8..96) { "字号须在 8 到 96 之间。" }
             previousEnd = span.end
+        }
+        var previousOffset = -1
+        for (paragraph in draft.paragraphs) {
+            require(paragraph.offset > previousOffset && paragraph.offset in 0..draft.body.length &&
+                (paragraph.offset == 0 || draft.body[paragraph.offset - 1] == '\n')) { "段落样式位置无效。" }
+            previousOffset = paragraph.offset
         }
     }
 
@@ -343,6 +370,7 @@ internal class WithinRepository(context: Context) {
                 .apply {
                     if (record.draft.spans.isNotEmpty()) put("spans", JSONArray(record.draft.spans.map { it.toJson() }))
                     if (record.draft.images.isNotEmpty()) put("images", JSONArray(record.draft.images.map { it.toJson() }))
+                    if (record.draft.paragraphs.isNotEmpty()) put("paragraphs", JSONArray(record.draft.paragraphs.map { it.toJson() }))
                 })
         }
         val bytes = JSONObject().put("version", 2).put("records", entries).toString().toByteArray(Charsets.UTF_8)
@@ -368,6 +396,15 @@ internal class WithinRepository(context: Context) {
             if (style.bold) put("bold", true)
             if (style.italic) put("italic", true)
             if (style.underline) put("underline", true)
+            if (style.strikethrough) put("strikethrough", true)
+            if (style.highlight) put("highlight", true)
+        }
+
+    private fun WithinParagraphStyle.toJson() = JSONObject()
+        .put("offset", offset)
+        .apply {
+            if (alignment != WithinParagraphAlignment.START) put("alignment", alignment.name)
+            if (list != WithinListStyle.NONE) put("list", list.name)
         }
 
     private fun WithinImageAttachment.toJson() = JSONObject()
